@@ -139,10 +139,13 @@ public class EnemyAgent : Agent
         continuous[0] = 0f;
         continuous[1] = 0f;
 
-        if (Input.GetKey(KeyCode.W)) continuous[0] = 1f;
-        if (Input.GetKey(KeyCode.S)) continuous[0] = -1f;
-        if (Input.GetKey(KeyCode.A)) continuous[1] = -1f;
-        if (Input.GetKey(KeyCode.D)) continuous[1] = 1f;
+        var keyboard = UnityEngine.InputSystem.Keyboard.current;
+        if (keyboard == null) return;
+
+        if (keyboard.wKey.isPressed) continuous[0] = 1f;
+        if (keyboard.sKey.isPressed) continuous[0] = -1f;
+        if (keyboard.aKey.isPressed) continuous[1] = -1f;
+        if (keyboard.dKey.isPressed) continuous[1] = 1f;
     }
 
     /// <summary>

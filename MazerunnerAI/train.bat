@@ -5,16 +5,24 @@ echo   MazerunnerAI - ML-Agents Training
 echo ============================================
 echo.
 
+:: Activate the Python 3.10 virtual environment
+call "%~dp0venv\Scripts\activate.bat"
+
+echo Python version:
+python --version
+echo.
+
 :: Check if mlagents is installed
-where mlagents-learn >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] mlagents-learn not found.
+python -c "import mlagents" 2>nul
+if errorlevel 1 (
+    echo [INFO] mlagents not found. Installing...
+    pip install mlagents==1.1.0
+    if errorlevel 1 (
+        echo [ERROR] Installation failed.
+        pause
+        exit /b 1
+    )
     echo.
-    echo Install it with:
-    echo   pip install mlagents
-    echo.
-    pause
-    exit /b 1
 )
 
 :: Set run ID with timestamp so runs don't overwrite each other
@@ -39,6 +47,6 @@ echo Training complete!
 echo.
 echo Your trained model is in: results\%RUN_ID%\
 echo Copy the .onnx file into Unity and assign it
-echo to the Enemy's Behavior Parameters > Model field.
+echo to the Enemy's Behavior Parameters ^> Model field.
 echo ============================================
 pause

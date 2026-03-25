@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
 /// Simple player controller using arrow keys.
@@ -23,11 +24,14 @@ public class PlayerController : MonoBehaviour
         float moveInput = 0f;
         float rotateInput = 0f;
 
+        var keyboard = Keyboard.current;
+        if (keyboard == null) return;
+
         // Arrow keys for movement
-        if (Input.GetKey(KeyCode.UpArrow)) moveInput = 1f;
-        if (Input.GetKey(KeyCode.DownArrow)) moveInput = -1f;
-        if (Input.GetKey(KeyCode.LeftArrow)) rotateInput = -1f;
-        if (Input.GetKey(KeyCode.RightArrow)) rotateInput = 1f;
+        if (keyboard.upArrowKey.isPressed) moveInput = 1f;
+        if (keyboard.downArrowKey.isPressed) moveInput = -1f;
+        if (keyboard.leftArrowKey.isPressed) rotateInput = -1f;
+        if (keyboard.rightArrowKey.isPressed) rotateInput = 1f;
 
         // Move forward/backward
         Vector3 move = transform.forward * moveInput * moveSpeed * Time.fixedDeltaTime;

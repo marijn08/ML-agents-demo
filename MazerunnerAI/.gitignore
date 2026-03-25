@@ -63,6 +63,9 @@ crashlytics-build.properties
 # ML-Agents training results
 results/
 
+# Python virtual environment
+venv/
+
 # OS files
 .DS_Store
 Thumbs.db
