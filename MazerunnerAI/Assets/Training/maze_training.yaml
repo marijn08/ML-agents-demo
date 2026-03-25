@@ -1,0 +1,41 @@
+behaviors:
+  MazeChaser:
+    # PPO is the standard algorithm for continuous control tasks
+    trainer_type: ppo
+
+    # How many total training steps to run
+    max_steps: 1000000
+
+    # Steps collected before each policy update
+    time_horizon: 128
+
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 0.0003
+      beta: 0.01          # Entropy bonus (encourages exploration)
+      epsilon: 0.2         # PPO clipping parameter
+      lambd: 0.95          # GAE lambda
+      num_epoch: 3
+      learning_rate_schedule: linear
+
+    # Neural network architecture
+    network_settings:
+      normalize: true
+      hidden_units: 256
+      num_layers: 2
+
+    # Reward signals
+    reward_signals:
+      extrinsic:
+        gamma: 0.99        # Discount factor
+        strength: 1.0
+      # Curiosity reward helps the agent explore the maze
+      curiosity:
+        gamma: 0.99
+        strength: 0.02
+        encoding_size: 128
+
+    # Keep checkpoints during training
+    keep_checkpoints: 5
+    checkpoint_interval: 200000
