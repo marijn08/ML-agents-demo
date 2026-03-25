@@ -4,16 +4,16 @@ behaviors:
     trainer_type: ppo
 
     # How many total training steps to run
-    max_steps: 1000000
+    max_steps: 2000000
 
     # Steps collected before each policy update
-    time_horizon: 128
+    time_horizon: 256
 
     hyperparameters:
-      batch_size: 256
-      buffer_size: 2048
+      batch_size: 1024
+      buffer_size: 10240
       learning_rate: 0.0003
-      beta: 0.01          # Entropy bonus (encourages exploration)
+      beta: 0.005          # Entropy bonus (encourages exploration)
       epsilon: 0.2         # PPO clipping parameter
       lambd: 0.95          # GAE lambda
       num_epoch: 3
@@ -34,7 +34,8 @@ behaviors:
       curiosity:
         gamma: 0.99
         strength: 0.02
-        encoding_size: 128
+        network_settings:
+          hidden_units: 128
 
     # Keep checkpoints during training
     keep_checkpoints: 5

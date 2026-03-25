@@ -101,25 +101,88 @@ Position the **Main Camera** above the maze looking down:
 
 ---
 
-## How to Train
+## Python Environment Setup
+
+The project uses a **Python 3.10 virtual environment** (`venv/`) to avoid dependency issues with ML-Agents. Python 3.10 is required because `mlagents 1.1.0` has compatibility issues with Python 3.11+.
 
 ### Prerequisites
-Install the ML-Agents Python package:
+- **Python 3.10** installed on your system ([download](https://www.python.org/downloads/release/python-31011/))
+- **Unity 6** with this project open
+
+### Step 1: Create the Virtual Environment
+Open a terminal in the project root and run:
 ```bash
-pip install mlagents
+C:\Python310\python.exe -m venv venv
+```
+> Replace `C:\Python310\python.exe` with the path to your Python 3.10 installation if different.
+
+### Step 2: Activate the Virtual Environment
+```bash
+.\venv\Scripts\activate
 ```
 
-### Start Training
+### Step 3: Verify Python Version
+```bash
+python --version
+```
+Expected output: `Python 3.10.x`
+
+### Step 4: Install ML-Agents
+```bash
+pip install mlagents==1.1.0
+```
+This installs all required dependencies including:
+- `mlagents==1.1.0`
+- `torch` (PyTorch)
+- `numpy==1.23.5`
+- `cattrs==1.5.0`
+- `tensorboard`
+
+### Step 5: Verify Installation
+```bash
+python -c "import mlagents; print('mlagents loaded OK')"
+```
+
+### All Commands Summary
+```bash
+# 1. Create venv (run once)
+C:\Python310\python.exe -m venv venv
+
+# 2. Activate venv (run every time you open a new terminal)
+.\venv\Scripts\activate
+
+# 3. Install mlagents (run once)
+pip install mlagents==1.1.0
+
+# 4. Verify installation
+python -c "import mlagents; print('mlagents loaded OK')"
+```
+
+---
+
+## How to Train
+
+### Quick Start (using train.bat)
+1. Double-click **train.bat** in the project root — it activates the venv and starts training automatically
+2. When you see `Listening on port 5004`, press **Play** in Unity
+3. Press `Ctrl+C` to stop training
+
+### Manual Training
 1. Open a terminal in the project root
-2. Run:
+2. Activate the venv:
+```bash
+.\venv\Scripts\activate
+```
+3. Start training:
 ```bash
 mlagents-learn Assets/Training/maze_training.yaml --run-id=MazeChaser_01
 ```
-3. When prompted, press **Play** in Unity
+4. When prompted, press **Play** in Unity
 
 ### Monitor Training
 Open TensorBoard to see training progress:
 ```bash
+.\venv\Scripts\activate
 tensorboard --logdir results
 ```
 

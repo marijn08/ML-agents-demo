@@ -4,6 +4,7 @@ using TMPro;
 /// <summary>
 /// Manages the game loop: maze generation, spawning, timer, and win/lose conditions.
 /// Each episode: generates a new maze, places player and enemy far apart, runs a 60s timer.
+/// Tracks and displays generation statistics on the UI.
 /// </summary>
 public class GameManager : MonoBehaviour
 {
@@ -15,12 +16,23 @@ public class GameManager : MonoBehaviour
     [Header("UI (Optional)")]
     public TextMeshProUGUI timerText;
     public TextMeshProUGUI resultText;
+    public TextMeshProUGUI statsText;
 
     [Header("Settings")]
     public float episodeDuration = 60f;
 
     private float timeRemaining;
     private bool episodeActive;
+
+    // ── Statistics ──
+    private int generation;
+    private int enemyWins;
+    private int playerWins;
+    private float fastestCatch = Mathf.Infinity;
+    private float totalCatchTime;
+    private float lastCatchTime;
+    private float totalReward;
+    private float lastReward;
 
     private void Start()
     {
@@ -32,6 +44,8 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void StartNewEpisode()
     {
+        generation++;
+
         // Generate a new random maze
         mazeGenerator.GenerateNewMaze();
 
@@ -51,6 +65,8 @@ public class GameManager : MonoBehaviour
 
         if (resultText != null)
             resultText.text = "";
+
+        UpdateStatsUI();
     }
 
     private void Update()
@@ -62,6 +78,9 @@ public class GameManager : MonoBehaviour
         // Update timer UI
         if (timerText != null)
             timerText.text = $"Time: {Mathf.CeilToInt(timeRemaining)}s";
+
+        // Update stats live so current reward is visible
+        UpdateStatsUI();
 
         // Time ran out - player survives!
         if (timeRemaining <= 0f)
@@ -78,9 +97,19 @@ public class GameManager : MonoBehaviour
         if (!episodeActive) return;
         episodeActive = false;
 
-        if (resultText != null)
-            resultText.text = "Enemy caught the player!";
+        float catchTime = episodeDuration - timeRemaining;
+        enemyWins++;
+        totalCatchTime += catchTime;
+        lastCatchTime = catchTime;
+        if (catchTime < fastestCatch)
+            fastestCatch = catchTime;
 
+        RecordReward();
+
+        if (resultText != null)
+            resultText.text = $"Enemy caught the player! ({catchTime:F1}s)";
+
+        UpdateStatsUI();
         enemy.OnCaughtPlayer();
 
         // Start next episode after a short delay
@@ -95,12 +124,48 @@ public class GameManager : MonoBehaviour
         if (!episodeActive) return;
         episodeActive = false;
 
+        playerWins++;
+        RecordReward();
+
         if (resultText != null)
             resultText.text = "Player survived!";
 
+        UpdateStatsUI();
         enemy.OnTimeUp();
 
         // Start next episode after a short delay
         Invoke(nameof(StartNewEpisode), 1f);
+    }
+
+    /// <summary>
+    /// Records the cumulative reward at the end of an episode.
+    /// </summary>
+    private void RecordReward()
+    {
+        lastReward = enemy.GetCumulativeReward();
+        totalReward += lastReward;
+    }
+
+    /// <summary>
+    /// Updates the stats panel with current training information.
+    /// </summary>
+    private void UpdateStatsUI()
+    {
+        if (statsText == null) return;
+
+        int totalEpisodes = enemyWins + playerWins;
+        float winRate = totalEpisodes > 0 ? (enemyWins / (float)totalEpisodes) * 100f : 0f;
+        float avgCatch = enemyWins > 0 ? totalCatchTime / enemyWins : 0f;
+        string fastest = fastestCatch < Mathf.Infinity ? $"{fastestCatch:F1}s" : "--";
+        float avgReward = totalEpisodes > 0 ? totalReward / totalEpisodes : 0f;
+        float currentReward = enemy.GetCumulativeReward();
+
+        statsText.text =
+            $"Generation: {generation}\n" +
+            $"Enemy Wins: {enemyWins}  |  Player Wins: {playerWins}\n" +
+            $"Win Rate: {winRate:F1}%\n" +
+            $"Avg Catch: {avgCatch:F1}s  |  Best: {fastest}\n" +
+            $"Last Catch: {(lastCatchTime > 0f ? $"{lastCatchTime:F1}s" : "--")}\n" +
+            $"Reward: {currentReward:F3}  |  Last: {lastReward:F3}  |  Avg: {avgReward:F3}";
     }
 }

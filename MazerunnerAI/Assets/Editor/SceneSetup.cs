@@ -211,7 +211,7 @@ public class SceneSetup : EditorWindow
 
         // Decision Requester
         DecisionRequester dr = enemy.AddComponent<DecisionRequester>();
-        dr.DecisionPeriod = 5;
+        dr.DecisionPeriod = 3;
 
         // Material
         enemy.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("EnemyMaterial", new Color(0.9f, 0.2f, 0.2f));
@@ -288,6 +288,15 @@ public class SceneSetup : EditorWindow
             "", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
             new Vector2(0, 40), 36);
 
+        // Stats panel (top-left)
+        GameObject statsObj = CreateTextElement(canvasObj.transform, "StatsText",
+            "Generation: 0\nEnemy Wins: 0  |  Player Wins: 0\nWin Rate: 0%\nAvg Catch: --  |  Best: --\nLast Catch: --",
+            new Vector2(0f, 1f), new Vector2(0f, 1f),
+            new Vector2(160, -80), 18);
+        // Make it left-aligned and wider
+        statsObj.GetComponent<RectTransform>().sizeDelta = new Vector2(380, 150);
+        statsObj.GetComponent<TMPro.TextMeshProUGUI>().alignment = TMPro.TextAlignmentOptions.TopLeft;
+
         // EventSystem
         if (Object.FindAnyObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
         {
@@ -343,13 +352,19 @@ public class SceneSetup : EditorWindow
         enemy.player = playerObj.transform;
         enemy.gameManager = gm;
 
+        // Player references
+        player.enemy = enemyObj.transform;
+
         // UI references
         Transform timerText = canvasObj.transform.Find("TimerText");
         Transform resultText = canvasObj.transform.Find("ResultText");
+        Transform statsText = canvasObj.transform.Find("StatsText");
         if (timerText != null)
             gm.timerText = timerText.GetComponent<TMPro.TextMeshProUGUI>();
         if (resultText != null)
             gm.resultText = resultText.GetComponent<TMPro.TextMeshProUGUI>();
+        if (statsText != null)
+            gm.statsText = statsText.GetComponent<TMPro.TextMeshProUGUI>();
 
         // Mark everything as dirty for serialization
         EditorUtility.SetDirty(gm);
