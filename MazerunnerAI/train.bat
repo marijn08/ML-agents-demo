@@ -39,7 +39,7 @@ echo.
 echo ============================================
 echo.
 
-mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --time-scale=20 --width=84 --height=84 --quality-level=0
+mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --time-scale=100 --width=84 --height=84 --quality-level=0
 
 echo.
 echo ============================================

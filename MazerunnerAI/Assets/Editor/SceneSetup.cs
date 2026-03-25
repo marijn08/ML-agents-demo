@@ -10,12 +10,14 @@ using Unity.MLAgents.Policies;
 /// </summary>
 public class SceneSetup : EditorWindow
 {
+    private static readonly int EnemyCount = 4;
+
     [MenuItem("MazerunnerAI/Setup Scene")]
     public static void SetupScene()
     {
         if (!EditorUtility.DisplayDialog(
             "Setup MazerunnerAI Scene",
-            "This will clear the current scene and create the full MazerunnerAI setup.\n\nContinue?",
+            $"This will clear the current scene and create the full MazerunnerAI setup with {EnemyCount} enemies.\n\nContinue?",
             "Yes, set it up", "Cancel"))
             return;
 
@@ -29,19 +31,26 @@ public class SceneSetup : EditorWindow
         // Create scene objects
         GameObject gameManagerObj = CreateGameManager(wallPrefab, floorPrefab);
         GameObject playerObj = CreatePlayer();
-        GameObject enemyObj = CreateEnemy();
+
+        // Create multiple enemies
+        GameObject[] enemyObjs = new GameObject[EnemyCount];
+        for (int i = 0; i < EnemyCount; i++)
+        {
+            enemyObjs[i] = CreateEnemy(i);
+        }
+
         SetupCamera();
         CreateLight();
         GameObject canvas = CreateUI();
 
         // Wire all references
-        WireReferences(gameManagerObj, playerObj, enemyObj, canvas);
+        WireReferences(gameManagerObj, playerObj, enemyObjs, canvas);
 
         // Mark scene dirty so the user can save
         UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
             UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
 
-        EditorUtility.DisplayDialog("Done!", "Scene setup complete.\n\n" +
+        EditorUtility.DisplayDialog("Done!", $"Scene setup complete with {EnemyCount} enemies.\n\n" +
             "- Press Play to test with heuristic controls\n" +
             "  (WASD = enemy, Arrow keys = player)\n\n" +
             "- Run train.bat to start ML training\n" +
@@ -186,11 +195,11 @@ public class SceneSetup : EditorWindow
     //  Enemy (ML-Agent)
     // ─────────────────────────────────────────────
 
-    private static GameObject CreateEnemy()
+    private static GameObject CreateEnemy(int index)
     {
         GameObject enemy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        enemy.name = "Enemy";
-        enemy.transform.position = new Vector3(19.5f, 0.5f, 19.5f);
+        enemy.name = index == 0 ? "Enemy" : $"Enemy ({index + 1})";
+        enemy.transform.position = new Vector3(19.5f - index * 2f, 0.5f, 19.5f);
         Undo.RegisterCreatedObjectUndo(enemy, "Create Enemy");
 
         // Rigidbody
@@ -205,7 +214,7 @@ public class SceneSetup : EditorWindow
         BehaviorParameters bp = enemy.GetComponent<BehaviorParameters>();
         if (bp == null) bp = enemy.AddComponent<BehaviorParameters>();
         bp.BehaviorName = "MazeChaser";
-        bp.BrainParameters.VectorObservationSize = 12; // 4 base + 8 wall rays
+        bp.BrainParameters.VectorObservationSize = 16; // 4 base + 12 wall rays
         bp.BrainParameters.ActionSpec = ActionSpec.MakeContinuous(2);
         bp.BehaviorType = BehaviorType.Default;
 
@@ -225,14 +234,14 @@ public class SceneSetup : EditorWindow
 
     private static void SetupCamera()
     {
-        // Top-down camera overlooking the maze (7x7 maze, cellSize 3 = 21x21 units)
+        // Top-down camera overlooking the maze (9x9 maze, cellSize 2 = 18x18 units)
         GameObject camObj = new GameObject("Main Camera");
         camObj.tag = "MainCamera";
         Undo.RegisterCreatedObjectUndo(camObj, "Create Camera");
 
         Camera cam = camObj.AddComponent<Camera>();
         cam.orthographic = true;
-        cam.orthographicSize = 14f;
+        cam.orthographicSize = 12f;
         cam.nearClipPlane = 0.1f;
         cam.farClipPlane = 50f;
         cam.clearFlags = CameraClearFlags.SolidColor;
@@ -240,8 +249,8 @@ public class SceneSetup : EditorWindow
 
         camObj.AddComponent<AudioListener>();
 
-        // Position above center of a 7x7 maze (21x21 world units)
-        camObj.transform.position = new Vector3(10.5f, 30f, 10.5f);
+        // Position above center of a 9x9 maze (18x18 world units)
+        camObj.transform.position = new Vector3(9f, 30f, 9f);
         camObj.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
     }
 
@@ -336,24 +345,32 @@ public class SceneSetup : EditorWindow
     // ─────────────────────────────────────────────
 
     private static void WireReferences(GameObject gameManagerObj, GameObject playerObj,
-        GameObject enemyObj, GameObject canvasObj)
+        GameObject[] enemyObjs, GameObject canvasObj)
     {
         GameManager gm = gameManagerObj.GetComponent<GameManager>();
         MazeGenerator maze = gameManagerObj.GetComponent<MazeGenerator>();
-        EnemyAgent enemy = enemyObj.GetComponent<EnemyAgent>();
         PlayerController player = playerObj.GetComponent<PlayerController>();
+
+        // Build enemies array
+        EnemyAgent[] enemies = new EnemyAgent[enemyObjs.Length];
+        for (int i = 0; i < enemyObjs.Length; i++)
+        {
+            enemies[i] = enemyObjs[i].GetComponent<EnemyAgent>();
+            enemies[i].player = playerObj.transform;
+            enemies[i].gameManager = gm;
+            EditorUtility.SetDirty(enemies[i]);
+        }
 
         // GameManager references
         gm.mazeGenerator = maze;
-        gm.enemy = enemy;
+        gm.enemies = enemies;
         gm.player = player;
 
-        // Enemy references
-        enemy.player = playerObj.transform;
-        enemy.gameManager = gm;
-
-        // Player references
-        player.enemy = enemyObj.transform;
+        // Player references — flee from nearest enemy
+        Transform[] enemyTransforms = new Transform[enemyObjs.Length];
+        for (int i = 0; i < enemyObjs.Length; i++)
+            enemyTransforms[i] = enemyObjs[i].transform;
+        player.enemies = enemyTransforms;
 
         // UI references
         Transform timerText = canvasObj.transform.Find("TimerText");
@@ -368,7 +385,8 @@ public class SceneSetup : EditorWindow
 
         // Mark everything as dirty for serialization
         EditorUtility.SetDirty(gm);
-        EditorUtility.SetDirty(enemy);
         EditorUtility.SetDirty(maze);
+        for (int i = 0; i < enemies.Length; i++)
+            EditorUtility.SetDirty(enemies[i]);
     }
 }

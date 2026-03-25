@@ -3,14 +3,14 @@ using TMPro;
 
 /// <summary>
 /// Manages the game loop: maze generation, spawning, timer, and win/lose conditions.
-/// Each episode: generates a new maze, places player and enemy far apart, runs a 60s timer.
-/// Tracks and displays generation statistics on the UI.
+/// Each episode: generates a new maze, places player and enemies far apart, runs a 60s timer.
+/// Supports multiple enemies all training in the same maze.
 /// </summary>
 public class GameManager : MonoBehaviour
 {
     [Header("References")]
     public MazeGenerator mazeGenerator;
-    public EnemyAgent enemy;
+    public EnemyAgent[] enemies;
     public PlayerController player;
 
     [Header("UI (Optional)")]
@@ -19,7 +19,7 @@ public class GameManager : MonoBehaviour
     public TextMeshProUGUI statsText;
 
     [Header("Settings")]
-    public float episodeDuration = 60f;
+    public float episodeDuration = 30f;
 
     private float timeRemaining;
     private bool episodeActive;
@@ -54,10 +54,13 @@ public class GameManager : MonoBehaviour
         player.transform.position = playerPos;
         player.transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
 
-        // Spawn enemy far from the player
-        Vector3 enemyPos = mazeGenerator.GetPositionFarFrom(playerPos);
-        enemy.transform.position = enemyPos;
-        enemy.transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+        // Spawn each enemy at a different position far from the player
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            Vector3 enemyPos = mazeGenerator.GetPositionFarFrom(playerPos);
+            enemies[i].transform.position = enemyPos;
+            enemies[i].transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+        }
 
         // Reset timer
         timeRemaining = episodeDuration;
@@ -90,7 +93,7 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Called when the enemy touches the player. Enemy wins.
+    /// Called when any enemy touches the player. Enemy wins.
     /// </summary>
     public void OnPlayerCaught()
     {
@@ -110,10 +113,15 @@ public class GameManager : MonoBehaviour
             resultText.text = $"Enemy caught the player! ({catchTime:F1}s)";
 
         UpdateStatsUI();
-        enemy.OnCaughtPlayer();
 
-        // Start next episode after a short delay
-        Invoke(nameof(StartNewEpisode), 1f);
+        // Reward the catcher and end all episodes
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            enemies[i].OnCaughtPlayer();
+        }
+
+        // Start next episode immediately
+        StartNewEpisode();
     }
 
     /// <summary>
@@ -131,18 +139,25 @@ public class GameManager : MonoBehaviour
             resultText.text = "Player survived!";
 
         UpdateStatsUI();
-        enemy.OnTimeUp();
 
-        // Start next episode after a short delay
-        Invoke(nameof(StartNewEpisode), 1f);
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            enemies[i].OnTimeUp();
+        }
+
+        // Start next episode immediately
+        StartNewEpisode();
     }
 
     /// <summary>
-    /// Records the cumulative reward at the end of an episode.
+    /// Records the average cumulative reward across all enemies.
     /// </summary>
     private void RecordReward()
     {
-        lastReward = enemy.GetCumulativeReward();
+        float sum = 0f;
+        for (int i = 0; i < enemies.Length; i++)
+            sum += enemies[i].GetCumulativeReward();
+        lastReward = sum / enemies.Length;
         totalReward += lastReward;
     }
 
@@ -158,10 +173,14 @@ public class GameManager : MonoBehaviour
         float avgCatch = enemyWins > 0 ? totalCatchTime / enemyWins : 0f;
         string fastest = fastestCatch < Mathf.Infinity ? $"{fastestCatch:F1}s" : "--";
         float avgReward = totalEpisodes > 0 ? totalReward / totalEpisodes : 0f;
-        float currentReward = enemy.GetCumulativeReward();
+
+        float currentReward = 0f;
+        for (int i = 0; i < enemies.Length; i++)
+            currentReward += enemies[i].GetCumulativeReward();
+        currentReward /= enemies.Length;
 
         statsText.text =
-            $"Generation: {generation}\n" +
+            $"Generation: {generation}  |  Enemies: {enemies.Length}\n" +
             $"Enemy Wins: {enemyWins}  |  Player Wins: {playerWins}\n" +
             $"Win Rate: {winRate:F1}%\n" +
             $"Avg Catch: {avgCatch:F1}s  |  Best: {fastest}\n" +

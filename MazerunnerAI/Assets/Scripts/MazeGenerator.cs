@@ -7,9 +7,11 @@ using UnityEngine;
 public class MazeGenerator : MonoBehaviour
 {
     [Header("Maze Settings")]
-    public int width = 7;
-    public int height = 7;
-    public float cellSize = 3f;
+    public int width = 9;
+    public int height = 9;
+    public float cellSize = 2f;
+    [Range(0f, 0.8f), Tooltip("Fraction of extra walls to remove after carving (0 = normal maze, 0.8 = very open)")]
+    public float openness = 0f;
 
     [Header("Prefabs")]
     public GameObject wallPrefab;
@@ -49,13 +51,16 @@ public class MazeGenerator : MonoBehaviour
         // Carve maze using recursive backtracking
         CarveFrom(0, 0);
 
+        // Remove extra walls to make the maze more open
+        RemoveExtraWalls();
+
         // Build the 3D maze
         BuildMaze();
 
         // Calculate bounds
         float totalWidth = width * cellSize;
         float totalHeight = height * cellSize;
-        Vector3 center = new Vector3(totalWidth / 2f, 0f, totalHeight / 2f);
+        Vector3 center = transform.position + new Vector3(totalWidth / 2f, 0f, totalHeight / 2f);
         return new Bounds(center, new Vector3(totalWidth, 1f, totalHeight));
     }
 
@@ -71,14 +76,16 @@ public class MazeGenerator : MonoBehaviour
 
     /// <summary>
     /// Gets a world position for a specific cell.
+    /// Accounts for the MazeGenerator's transform position.
     /// </summary>
     public Vector3 CellToWorld(int x, int y)
     {
-        return new Vector3(
+        Vector3 local = new Vector3(
             x * cellSize + cellSize / 2f,
             0.5f,
             y * cellSize + cellSize / 2f
         );
+        return transform.position + local;
     }
 
     /// <summary>
@@ -145,6 +152,39 @@ public class MazeGenerator : MonoBehaviour
             case 1: walls[x, y, 1] = false; break;       // Up
             case 2: walls[x - 1, y, 0] = false; break;   // Left (= right wall of neighbor)
             case 3: walls[x, y - 1, 1] = false; break;   // Down (= top wall of neighbor)
+        }
+    }
+
+    /// <summary>
+    /// Randomly removes a fraction of remaining internal walls to create a more open maze.
+    /// </summary>
+    private void RemoveExtraWalls()
+    {
+        // Collect all remaining internal walls
+        var remaining = new System.Collections.Generic.List<(int x, int y, int d)>();
+        for (int x = 0; x < width; x++)
+            for (int y = 0; y < height; y++)
+            {
+                // Right wall (internal only, skip boundary)
+                if (x < width - 1 && walls[x, y, 0])
+                    remaining.Add((x, y, 0));
+                // Top wall (internal only, skip boundary)
+                if (y < height - 1 && walls[x, y, 1])
+                    remaining.Add((x, y, 1));
+            }
+
+        // Shuffle and remove a fraction
+        for (int i = remaining.Count - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            (remaining[i], remaining[j]) = (remaining[j], remaining[i]);
+        }
+
+        int toRemove = Mathf.RoundToInt(remaining.Count * openness);
+        for (int i = 0; i < toRemove; i++)
+        {
+            var (x, y, d) = remaining[i];
+            walls[x, y, d] = false;
         }
     }
 

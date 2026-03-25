@@ -17,7 +17,7 @@ public class EnemyAgent : Agent
 
     [Header("Detection")]
     public float maxDetectionRange = 30f;
-    public int wallRayCount = 8;
+    public int wallRayCount = 12;
     public float wallRayLength = 10f;
 
     [Header("References")]
@@ -25,6 +25,9 @@ public class EnemyAgent : Agent
     public GameManager gameManager;
 
     private Rigidbody rb;
+    private float previousDistance;
+    private Vector3 previousPosition;
+    private Vector3 previousPlayerPosition;
 
     public override void Initialize()
     {
@@ -34,36 +37,34 @@ public class EnemyAgent : Agent
 
     public override void OnEpisodeBegin()
     {
-        // Reset velocity
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
+        previousDistance = Vector3.Distance(transform.position, player.position);
+        previousPosition = transform.position;
+        previousPlayerPosition = player.position;
     }
 
     /// <summary>
     /// Collects observations the agent uses to make decisions.
-    /// Total observations: 4 + wallRayCount = 12 (with default 8 rays)
+    /// Total observations: 4 + wallRayCount = 16 (with default 12 rays)
     /// </summary>
     public override void CollectObservations(VectorSensor sensor)
     {
         Vector3 toPlayer = player.position - transform.position;
         Vector3 toPlayerFlat = new Vector3(toPlayer.x, 0f, toPlayer.z);
 
-        // 1. Normalized distance to player (0 = on top, 1 = at max range)
+        // 1. Normalized distance to player
         float distance = toPlayerFlat.magnitude;
         sensor.AddObservation(distance / maxDetectionRange);
 
-        // 2. Direction to player relative to enemy's forward (dot product)
-        //    +1 = directly ahead, -1 = directly behind
+        // 2. Forward dot to player direction
         Vector3 dirToPlayer = toPlayerFlat.normalized;
-        float forwardDot = Vector3.Dot(transform.forward, dirToPlayer);
-        sensor.AddObservation(forwardDot);
+        sensor.AddObservation(Vector3.Dot(transform.forward, dirToPlayer));
 
-        // 3. Side direction to player (cross product y-component)
-        //    +1 = player is to the right, -1 = player is to the left
-        float rightDot = Vector3.Dot(transform.right, dirToPlayer);
-        sensor.AddObservation(rightDot);
+        // 3. Right dot to player direction
+        sensor.AddObservation(Vector3.Dot(transform.right, dirToPlayer));
 
-        // 4. Line of sight: can the enemy directly see the player?
+        // 4. Line of sight to player
         bool hasLineOfSight = false;
         if (distance <= maxDetectionRange)
         {
@@ -83,12 +84,11 @@ public class EnemyAgent : Agent
 
             if (Physics.Raycast(transform.position, dir, out RaycastHit wallHit, wallRayLength))
             {
-                // Normalized distance to wall (0 = touching, 1 = at max ray length)
                 sensor.AddObservation(wallHit.distance / wallRayLength);
             }
             else
             {
-                sensor.AddObservation(1f); // No wall detected = max distance
+                sensor.AddObservation(1f);
             }
         }
     }
@@ -99,8 +99,8 @@ public class EnemyAgent : Agent
     /// </summary>
     public override void OnActionReceived(ActionBuffers actions)
     {
-        float moveInput = actions.ContinuousActions[0];  // -1 to 1
-        float rotateInput = actions.ContinuousActions[1]; // -1 to 1
+        float moveInput = actions.ContinuousActions[0];
+        float rotateInput = actions.ContinuousActions[1];
 
         // Move forward/backward
         Vector3 move = transform.forward * moveInput * moveSpeed * Time.fixedDeltaTime;
@@ -111,28 +111,45 @@ public class EnemyAgent : Agent
         Quaternion turnRotation = Quaternion.Euler(0f, rotation, 0f);
         rb.MoveRotation(rb.rotation * turnRotation);
 
-        // Small time penalty to encourage catching the player quickly
-        AddReward(-0.001f);
+        // ── Rewards ──
+        // Budget: catch=+1.0 must dominate. Shaping ~30% of terminal max.
+        // (~500 decision steps per 30s episode)
 
-        // Reward for getting closer to the player
-        float distanceToPlayer = Vector3.Distance(transform.position, player.position);
-        float proximityReward = 1f - (distanceToPlayer / maxDetectionRange);
-        AddReward(proximityReward * 0.002f);
+        // Time penalty — standing still for 30s costs -0.25 total
+        AddReward(-0.0005f);
 
-        // Bonus reward when the enemy has line of sight of the player
+        // Reward the agent's own movement toward the player.
+        // Isolate agent contribution by subtracting what distance change
+        // the player's movement alone would cause.
+        float currentDistance = Vector3.Distance(transform.position, player.position);
+        float totalDelta = previousDistance - currentDistance;
+
+        float distIfAgentStill = Vector3.Distance(previousPosition, player.position);
+        float playerOnlyDelta = previousDistance - distIfAgentStill;
+
+        float agentDelta = totalDelta - playerOnlyDelta;
+        AddReward(agentDelta * 0.08f);
+        previousDistance = currentDistance;
+        previousPlayerPosition = player.position;
+
+        // Reward for facing toward the player — creates a turning gradient
         Vector3 dirToPlayer = (player.position - transform.position).normalized;
-        if (Physics.Raycast(transform.position, dirToPlayer, out RaycastHit hit, maxDetectionRange))
+        float facingDot = Vector3.Dot(transform.forward, dirToPlayer);
+        // facingDot: +1 = facing player, -1 = facing away. Only reward positive facing.
+        if (facingDot > 0f)
         {
-            if (hit.transform == player)
-            {
-                AddReward(0.005f);
-            }
+            AddReward(facingDot * 0.0002f); // ~0.05 per episode if always facing
         }
+
+        // Penalty for not moving — makes waiting expensive
+        float distanceMoved = Vector3.Distance(transform.position, previousPosition);
+        if (distanceMoved < 0.01f)
+        {
+            AddReward(-0.001f); // -0.5 per episode if always stuck = as bad as timeout
+        }
+        previousPosition = transform.position;
     }
 
-    /// <summary>
-    /// Allows manual control for testing with WASD keys.
-    /// </summary>
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var continuous = actionsOut.ContinuousActions;
@@ -148,21 +165,15 @@ public class EnemyAgent : Agent
         if (keyboard.dKey.isPressed) continuous[1] = 1f;
     }
 
-    /// <summary>
-    /// Called when the enemy catches the player.
-    /// </summary>
     public void OnCaughtPlayer()
     {
         AddReward(1.0f);
         EndEpisode();
     }
 
-    /// <summary>
-    /// Called when time runs out (player survived).
-    /// </summary>
     public void OnTimeUp()
     {
-        AddReward(-1.0f);
+        AddReward(-0.5f);
         EndEpisode();
     }
 
@@ -174,10 +185,17 @@ public class EnemyAgent : Agent
         }
     }
 
-    // Debug visualization of raycasts in the Scene view
+    private void OnCollisionStay(Collision collision)
+    {
+        // Light penalty for pressing against walls (-0.1 per episode if constant)
+        if (collision.transform != player)
+        {
+            AddReward(-0.00007f);
+        }
+    }
+
     private void OnDrawGizmosSelected()
     {
-        // Wall rays
         Gizmos.color = Color.yellow;
         float angleStep = 360f / wallRayCount;
         for (int i = 0; i < wallRayCount; i++)
@@ -187,7 +205,6 @@ public class EnemyAgent : Agent
             Gizmos.DrawRay(transform.position, dir * wallRayLength);
         }
 
-        // Line of sight to player
         if (player != null)
         {
             Gizmos.color = Color.red;
