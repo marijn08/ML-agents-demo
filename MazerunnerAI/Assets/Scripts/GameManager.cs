@@ -2,9 +2,9 @@ using UnityEngine;
 using TMPro;
 
 /// <summary>
-/// Global stats tracker ross all training arenas.
+/// Global stats tracker across all training arenas.
 /// Each ArenaManager reports catches and timeouts here.
-/// </summary>ac
+/// </summary>
 public class GameManager : MonoBehaviour
 {
     [Header("Arenas")]

@@ -23,6 +23,7 @@ public class MazeGenerator : MonoBehaviour
     private bool[,,] walls;
 
     private Transform mazeParent;
+    private System.Collections.Generic.Dictionary<Vector2Int, Renderer> floorRenderers;
 
     /// <summary>
     /// Destroys old maze and generates a fresh random one.
@@ -33,7 +34,9 @@ public class MazeGenerator : MonoBehaviour
         ClearMaze();
 
         mazeParent = new GameObject("Maze").transform;
-        mazeParent.SetParent(transform, false); // false = localPosition stays at 0,0,0
+        mazeParent.SetParent(transform, false);
+
+        floorRenderers = new System.Collections.Generic.Dictionary<Vector2Int, Renderer>(); // false = localPosition stays at 0,0,0
 
         visited = new bool[width, height];
         // walls[x, y, 0] = wall on the RIGHT side of cell (x,y)
@@ -222,6 +225,10 @@ public class MazeGenerator : MonoBehaviour
                 GameObject floor = Instantiate(floorPrefab, mazeParent);
                 floor.transform.localPosition = cellCenter;
                 floor.transform.localScale = new Vector3(cellSize, 0.1f, cellSize);
+                Renderer floorRend = floor.GetComponent<Renderer>();
+                floorRend.material = new Material(floorRend.sharedMaterial);
+                floorRend.material.color = Color.white;
+                floorRenderers[new Vector2Int(x, y)] = floorRend;
 
                 // Right wall
                 if (x == width - 1 || walls[x, y, 0])
@@ -259,5 +266,28 @@ public class MazeGenerator : MonoBehaviour
         GameObject wall = Instantiate(wallPrefab, mazeParent);
         wall.transform.localPosition = position;
         wall.transform.localScale = scale;
+    }
+
+    /// <summary>
+    /// Sets the color of a floor tile at the given maze cell coordinate.
+    /// </summary>
+    public void SetFloorColor(Vector2Int cell, Color color)
+    {
+        if (floorRenderers != null && floorRenderers.TryGetValue(cell, out Renderer rend))
+        {
+            rend.material.color = color;
+        }
+    }
+
+    /// <summary>
+    /// Converts a world position to a maze cell coordinate.
+    /// </summary>
+    public Vector2Int WorldToCellCoord(Vector3 worldPos)
+    {
+        Vector3 local = worldPos - transform.position;
+        return new Vector2Int(
+            Mathf.FloorToInt(local.x / cellSize),
+            Mathf.FloorToInt(local.z / cellSize)
+        );
     }
 }

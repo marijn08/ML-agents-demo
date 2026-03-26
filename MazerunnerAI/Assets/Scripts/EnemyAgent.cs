@@ -133,10 +133,11 @@ public class EnemyAgent : Agent
                 else
                 {
                     // How many steps ago was this cell last visited?
-                    // More steps ago = higher value = better to revisit
+                    // More steps ago = higher value = slightly better to revisit
+                    // Capped at 0.5 so visited cells always feel different from unvisited (1.0)
                     int stepsAgo = decisionStep - cellLastVisitStep[neighborCell];
-                    float staleness = Mathf.Clamp01(stepsAgo / 100f); // 0..1 over 100 steps
-                    sensor.AddObservation(Mathf.Max(staleness, 0.01f)); // never exactly 0
+                    float staleness = Mathf.Clamp(stepsAgo / 10000f, 0.01f, 0.5f);
+                    sensor.AddObservation(staleness);
                 }
             }
         }
@@ -223,8 +224,7 @@ public class EnemyAgent : Agent
             if (stuckCounter > 5)
             {
                 Vector2Int cell = WorldToCell(transform.position);
-                float cs = 2f; // cellSize
-                Vector3 cellCenter = new Vector3(cell.x * cs + cs / 2f, transform.position.y, cell.y * cs + cs / 2f);
+                Vector3 cellCenter = arenaManager.mazeGenerator.CellToWorld(cell.x, cell.y);
 
                 rb.MovePosition(cellCenter);
                 rb.linearVelocity = Vector3.zero;
@@ -288,6 +288,21 @@ public class EnemyAgent : Agent
         // Update last-visit timestamp
         cellLastVisitStep[currentCell] = decisionStep;
 
+        // ── Floor tile coloring ──
+        // Just visited = dark red, older = lighter red, never back to white
+        MazeGenerator maze = arenaManager.mazeGenerator;
+        if (maze != null)
+        {
+            foreach (var kvp in cellLastVisitStep)
+            {
+                int stepsAgo = decisionStep - kvp.Value;
+                float t = Mathf.Clamp01(stepsAgo / 10000f); // 0 = just visited, 1 = 10000+ steps ago
+                // Dark red → light pink (never white)
+                Color c = Color.Lerp(new Color(0.6f, 0f, 0f), new Color(1f, 0.7f, 0.7f), t);
+                maze.SetFloorColor(kvp.Key, c);
+            }
+        }
+
         lastAction = action;
     }
 
@@ -326,9 +341,12 @@ public class EnemyAgent : Agent
 
     /// <summary>
     /// Converts a world position to a grid cell coordinate for exploration tracking.
+    /// Uses the arena's MazeGenerator to get correct local coordinates.
     /// </summary>
     private Vector2Int WorldToCell(Vector3 pos)
     {
+        if (arenaManager != null && arenaManager.mazeGenerator != null)
+            return arenaManager.mazeGenerator.WorldToCellCoord(pos);
         return new Vector2Int(
             Mathf.FloorToInt(pos.x / 2f),
             Mathf.FloorToInt(pos.z / 2f)
