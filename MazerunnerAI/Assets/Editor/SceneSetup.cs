@@ -12,7 +12,7 @@ using Unity.MLAgents.Policies;
 public class SceneSetup : EditorWindow
 {
     private static readonly int ArenaCount = 4;
-    private static readonly float ArenaSpacing = 25f; // space between arena origins
+    private static readonly float ArenaSpacing = 30f; // space between arena origins
 
     [MenuItem("MazerunnerAI/Setup Scene")]
     public static void SetupScene()
@@ -123,6 +123,9 @@ public class SceneSetup : EditorWindow
 
         DecisionRequester dr = enemyObj.AddComponent<DecisionRequester>();
         dr.DecisionPeriod = 5;
+
+        // Very generous max steps — episode ends on catch, but has a safety cap
+        agent.MaxStep = 25000; // ~250 seconds at decision period 5
 
         enemyObj.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("EnemyMaterial", new Color(0.9f, 0.2f, 0.2f));
 
@@ -248,7 +251,7 @@ public class SceneSetup : EditorWindow
 
         Camera cam = camObj.AddComponent<Camera>();
         cam.orthographic = true;
-        cam.orthographicSize = 28f; // large enough to see all 4 arenas
+        cam.orthographicSize = 38f; // large enough to see all 4 arenas with UI space
         cam.nearClipPlane = 0.1f;
         cam.farClipPlane = 50f;
         cam.clearFlags = CameraClearFlags.SolidColor;
@@ -256,9 +259,9 @@ public class SceneSetup : EditorWindow
 
         camObj.AddComponent<AudioListener>();
 
-        float centerX = ArenaSpacing / 2f + 9f;
-        float centerZ = ArenaSpacing / 2f + 9f;
-        camObj.transform.position = new Vector3(centerX, 40f, centerZ);
+        float centerX = ArenaSpacing / 2f + 13f;
+        float centerZ = ArenaSpacing / 2f + 13f;
+        camObj.transform.position = new Vector3(centerX, 50f, centerZ);
         camObj.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
     }
 
@@ -305,8 +308,8 @@ public class SceneSetup : EditorWindow
             new Vector2(0, 0), 16);
         RectTransform statsRect = statsObj.GetComponent<RectTransform>();
         statsRect.pivot = new Vector2(1f, 1f);
-        statsRect.anchoredPosition = new Vector2(-10, -10);
-        statsRect.sizeDelta = new Vector2(380, 250);
+        statsRect.anchoredPosition = new Vector2(-20, -20);
+        statsRect.sizeDelta = new Vector2(350, 250);
         statsObj.GetComponent<TMPro.TextMeshProUGUI>().alignment = TMPro.TextAlignmentOptions.TopRight;
 
         // EventSystem

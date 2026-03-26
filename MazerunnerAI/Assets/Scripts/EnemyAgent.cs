@@ -37,6 +37,8 @@ public class EnemyAgent : Agent
     private int lastAction;
     private int decisionStep; // counts decisions within this episode
 
+    private int stuckCounter;
+
     public override void Initialize()
     {
         rb = GetComponent<Rigidbody>();
@@ -59,6 +61,7 @@ public class EnemyAgent : Agent
         stepsSinceLastNewCell = 0;
         lastAction = 0;
         decisionStep = 0;
+        stuckCounter = 0;
     }
 
     /// <summary>
@@ -71,14 +74,7 @@ public class EnemyAgent : Agent
         float distance = toPlayerFlat.magnitude;
         Vector3 dirToPlayer = toPlayerFlat.normalized;
 
-        // 1. Normalized distance
-        sensor.AddObservation(distance / maxDetectionRange);
-
-        // 2-3. Direction to player in local frame
-        sensor.AddObservation(Vector3.Dot(transform.forward, dirToPlayer));
-        sensor.AddObservation(Vector3.Dot(transform.right, dirToPlayer));
-
-        // 4. Line of sight
+        // 4. Line of sight (compute first, needed for other obs)
         bool hasLOS = false;
         if (distance <= maxDetectionRange)
         {
@@ -87,6 +83,15 @@ public class EnemyAgent : Agent
                 hasLOS = hit.transform == player;
             }
         }
+
+        // 1. Normalized distance (only when LOS, otherwise 0 = no info)
+        sensor.AddObservation(hasLOS ? distance / maxDetectionRange : 0f);
+
+        // 2-3. Direction to player in local frame (only when LOS)
+        sensor.AddObservation(hasLOS ? Vector3.Dot(transform.forward, dirToPlayer) : 0f);
+        sensor.AddObservation(hasLOS ? Vector3.Dot(transform.right, dirToPlayer) : 0f);
+
+        // 4. Line of sight flag
         sensor.AddObservation(hasLOS ? 1f : 0f);
 
         // 5-8. Wall raycasts (relative to agent facing)
@@ -209,6 +214,35 @@ public class EnemyAgent : Agent
         if (!Physics.Raycast(transform.position, transform.forward, 0.6f))
         {
             rb.MovePosition(rb.position + transform.forward * moveSpeed * Time.fixedDeltaTime);
+            stuckCounter = 0;
+        }
+        else
+        {
+            stuckCounter++;
+            // If stuck, snap to the center of current cell and face an open direction
+            if (stuckCounter > 5)
+            {
+                Vector2Int cell = WorldToCell(transform.position);
+                float cs = 2f; // cellSize
+                Vector3 cellCenter = new Vector3(cell.x * cs + cs / 2f, transform.position.y, cell.y * cs + cs / 2f);
+
+                rb.MovePosition(cellCenter);
+                rb.linearVelocity = Vector3.zero;
+
+                // Face the first open cardinal direction
+                Vector3[] cardinals = { Vector3.forward, Vector3.right, Vector3.back, Vector3.left };
+                foreach (var d in cardinals)
+                {
+                    if (!Physics.Raycast(cellCenter, d, 1.2f))
+                    {
+                        targetRotation = Quaternion.LookRotation(d, Vector3.up);
+                        rb.MoveRotation(targetRotation);
+                        isTurning = false;
+                        break;
+                    }
+                }
+                stuckCounter = 0;
+            }
         }
 
         // ── Rewards ──

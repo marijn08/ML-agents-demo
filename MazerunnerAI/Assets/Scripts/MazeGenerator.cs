@@ -7,11 +7,11 @@ using UnityEngine;
 public class MazeGenerator : MonoBehaviour
 {
     [Header("Maze Settings")]
-    public int width = 9;
-    public int height = 9;
+    public int width = 13;
+    public int height = 13;
     public float cellSize = 2f;
     [Range(0f, 0.8f), Tooltip("Fraction of extra walls to remove after carving (0 = normal maze, 0.8 = very open)")]
-    public float openness = 0f;
+    public float openness = 0.1f;
 
     [Header("Prefabs")]
     public GameObject wallPrefab;

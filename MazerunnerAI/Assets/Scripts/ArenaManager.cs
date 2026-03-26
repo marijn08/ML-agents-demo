@@ -36,7 +36,7 @@ public class ArenaManager : MonoBehaviour
 
         // Spawn enemy — 0% chance close, 100% far
         Vector3 enemyPos;
-        if (Random.value < 0f)
+        if (Random.value < 0.2f)
             enemyPos = mazeGenerator.GetRandomPosition();
         else
             enemyPos = mazeGenerator.GetPositionFarFrom(playerPos);
@@ -51,14 +51,7 @@ public class ArenaManager : MonoBehaviour
 
     private void Update()
     {
-        if (!episodeActive) return;
-
-        timeRemaining -= Time.deltaTime;
-
-        if (timeRemaining <= 0f)
-        {
-            OnPlayerSurvived();
-        }
+        // No timer — episode only ends when enemy catches the player
     }
 
     /// <summary>
