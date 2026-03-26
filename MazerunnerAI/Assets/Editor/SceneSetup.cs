@@ -6,18 +6,20 @@ using Unity.MLAgents.Policies;
 
 /// <summary>
 /// Editor tool that builds the entire MazerunnerAI scene in one click.
+/// Creates 4 independent arenas, each with its own maze, enemy, and player.
 /// Access via the Unity menu: MazerunnerAI > Setup Scene.
 /// </summary>
 public class SceneSetup : EditorWindow
 {
-    private static readonly int EnemyCount = 4;
+    private static readonly int ArenaCount = 4;
+    private static readonly float ArenaSpacing = 25f; // space between arena origins
 
     [MenuItem("MazerunnerAI/Setup Scene")]
     public static void SetupScene()
     {
         if (!EditorUtility.DisplayDialog(
             "Setup MazerunnerAI Scene",
-            $"This will clear the current scene and create the full MazerunnerAI setup with {EnemyCount} enemies.\n\nContinue?",
+            $"This will clear the current scene and create {ArenaCount} independent training arenas.\n\nContinue?",
             "Yes, set it up", "Cancel"))
             return;
 
@@ -28,34 +30,121 @@ public class SceneSetup : EditorWindow
         GameObject wallPrefab = CreateWallPrefab();
         GameObject floorPrefab = CreateFloorPrefab();
 
-        // Create scene objects
-        GameObject gameManagerObj = CreateGameManager(wallPrefab, floorPrefab);
-        GameObject playerObj = CreatePlayer();
+        // Create global GameManager (stats only)
+        GameObject gameManagerObj = new GameObject("GameManager");
+        Undo.RegisterCreatedObjectUndo(gameManagerObj, "Create GameManager");
+        GameManager globalStats = gameManagerObj.AddComponent<GameManager>();
 
-        // Create multiple enemies
-        GameObject[] enemyObjs = new GameObject[EnemyCount];
-        for (int i = 0; i < EnemyCount; i++)
+        // Create arenas
+        ArenaManager[] arenaManagers = new ArenaManager[ArenaCount];
+        for (int i = 0; i < ArenaCount; i++)
         {
-            enemyObjs[i] = CreateEnemy(i);
+            arenaManagers[i] = CreateArena(i, wallPrefab, floorPrefab, globalStats);
         }
+        globalStats.arenas = arenaManagers;
 
         SetupCamera();
         CreateLight();
         GameObject canvas = CreateUI();
 
-        // Wire all references
-        WireReferences(gameManagerObj, playerObj, enemyObjs, canvas);
+        // Wire UI to global stats
+        Transform statsText = canvas.transform.Find("StatsText");
+        if (statsText != null)
+            globalStats.statsText = statsText.GetComponent<TMPro.TextMeshProUGUI>();
+
+        EditorUtility.SetDirty(globalStats);
 
         // Mark scene dirty so the user can save
         UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
             UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
 
-        EditorUtility.DisplayDialog("Done!", $"Scene setup complete with {EnemyCount} enemies.\n\n" +
+        EditorUtility.DisplayDialog("Done!", $"Scene setup complete with {ArenaCount} independent arenas.\n\n" +
+            "Each arena has its own maze, enemy, and player.\n" +
+            "Episodes run independently per arena.\n\n" +
             "- Press Play to test with heuristic controls\n" +
-            "  (WASD = enemy, Arrow keys = player)\n\n" +
-            "- Run train.bat to start ML training\n" +
-            "  then press Play in Unity when prompted",
+            "- Run train.bat to start ML training",
             "OK");
+    }
+
+    /// <summary>
+    /// Creates a single arena with its own maze, enemy, and player.
+    /// </summary>
+    private static ArenaManager CreateArena(int index, GameObject wallPrefab, GameObject floorPrefab, GameManager globalStats)
+    {
+        // Arena root — offset each arena so they don't overlap
+        // Layout: 2x2 grid
+        int col = index % 2;
+        int row = index / 2;
+        Vector3 arenaOrigin = new Vector3(col * ArenaSpacing, 0f, row * ArenaSpacing);
+
+        GameObject arenaRoot = new GameObject($"Arena_{index + 1}");
+        arenaRoot.transform.position = arenaOrigin;
+        Undo.RegisterCreatedObjectUndo(arenaRoot, $"Create Arena {index + 1}");
+
+        // MazeGenerator on the arena root
+        MazeGenerator maze = arenaRoot.AddComponent<MazeGenerator>();
+        maze.wallPrefab = wallPrefab;
+        maze.floorPrefab = floorPrefab;
+
+        // Player (child of arena)
+        GameObject playerObj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        playerObj.name = "Player";
+        playerObj.tag = "Player";
+        playerObj.transform.SetParent(arenaRoot.transform);
+        playerObj.transform.localPosition = new Vector3(1.5f, 0.5f, 1.5f);
+
+        Rigidbody playerRb = playerObj.AddComponent<Rigidbody>();
+        playerRb.constraints = RigidbodyConstraints.FreezeRotation;
+        playerRb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        playerRb.isKinematic = true;
+
+        PlayerController pc = playerObj.AddComponent<PlayerController>();
+        pc.autonomous = false;
+        playerObj.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("PlayerMaterial", new Color(0.2f, 0.5f, 1f));
+
+        // Enemy (child of arena)
+        GameObject enemyObj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        enemyObj.name = "Enemy";
+        enemyObj.transform.SetParent(arenaRoot.transform);
+        enemyObj.transform.localPosition = new Vector3(16.5f, 0.5f, 16.5f);
+
+        Rigidbody enemyRb = enemyObj.AddComponent<Rigidbody>();
+        enemyRb.constraints = RigidbodyConstraints.FreezeRotation;
+        enemyRb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+
+        EnemyAgent agent = enemyObj.AddComponent<EnemyAgent>();
+
+        BehaviorParameters bp = enemyObj.GetComponent<BehaviorParameters>();
+        if (bp == null) bp = enemyObj.AddComponent<BehaviorParameters>();
+        bp.BehaviorName = "MazeChaser";
+        bp.BrainParameters.VectorObservationSize = 16;
+        bp.BrainParameters.ActionSpec = ActionSpec.MakeDiscrete(4);
+        bp.BehaviorType = BehaviorType.Default;
+
+        DecisionRequester dr = enemyObj.AddComponent<DecisionRequester>();
+        dr.DecisionPeriod = 5;
+
+        enemyObj.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("EnemyMaterial", new Color(0.9f, 0.2f, 0.2f));
+
+        // ArenaManager on the arena root
+        ArenaManager arena = arenaRoot.AddComponent<ArenaManager>();
+        arena.mazeGenerator = maze;
+        arena.enemy = agent;
+        arena.player = pc;
+        arena.globalStats = globalStats;
+
+        // Wire agent references
+        agent.player = playerObj.transform;
+        agent.arenaManager = arena;
+
+        // Wire player enemy references (for flee mode later)
+        pc.enemies = new Transform[] { enemyObj.transform };
+
+        EditorUtility.SetDirty(arena);
+        EditorUtility.SetDirty(agent);
+        EditorUtility.SetDirty(pc);
+
+        return arena;
     }
 
     // ─────────────────────────────────────────────
@@ -146,102 +235,20 @@ public class SceneSetup : EditorWindow
     }
 
     // ─────────────────────────────────────────────
-    //  Game Manager
-    // ─────────────────────────────────────────────
-
-    private static GameObject CreateGameManager(GameObject wallPrefab, GameObject floorPrefab)
-    {
-        GameObject obj = new GameObject("GameManager");
-        Undo.RegisterCreatedObjectUndo(obj, "Create GameManager");
-
-        // Add GameManager script
-        obj.AddComponent<GameManager>();
-
-        // Add MazeGenerator and assign prefabs
-        MazeGenerator maze = obj.AddComponent<MazeGenerator>();
-        maze.wallPrefab = wallPrefab;
-        maze.floorPrefab = floorPrefab;
-
-        return obj;
-    }
-
-    // ─────────────────────────────────────────────
-    //  Player
-    // ─────────────────────────────────────────────
-
-    private static GameObject CreatePlayer()
-    {
-        GameObject player = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        player.name = "Player";
-        player.tag = "Player";
-        player.transform.position = new Vector3(1.5f, 0.5f, 1.5f);
-        Undo.RegisterCreatedObjectUndo(player, "Create Player");
-
-        // Rigidbody
-        Rigidbody rb = player.AddComponent<Rigidbody>();
-        rb.constraints = RigidbodyConstraints.FreezeRotation;
-        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
-
-        // Player controller
-        player.AddComponent<PlayerController>();
-
-        // Material
-        player.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("PlayerMaterial", new Color(0.2f, 0.5f, 1f));
-
-        return player;
-    }
-
-    // ─────────────────────────────────────────────
-    //  Enemy (ML-Agent)
-    // ─────────────────────────────────────────────
-
-    private static GameObject CreateEnemy(int index)
-    {
-        GameObject enemy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        enemy.name = index == 0 ? "Enemy" : $"Enemy ({index + 1})";
-        enemy.transform.position = new Vector3(19.5f - index * 2f, 0.5f, 19.5f);
-        Undo.RegisterCreatedObjectUndo(enemy, "Create Enemy");
-
-        // Rigidbody
-        Rigidbody rb = enemy.AddComponent<Rigidbody>();
-        rb.constraints = RigidbodyConstraints.FreezeRotation;
-        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
-
-        // ML-Agent script
-        enemy.AddComponent<EnemyAgent>();
-
-        // Behavior Parameters (added automatically by Agent, but we configure it)
-        BehaviorParameters bp = enemy.GetComponent<BehaviorParameters>();
-        if (bp == null) bp = enemy.AddComponent<BehaviorParameters>();
-        bp.BehaviorName = "MazeChaser";
-        bp.BrainParameters.VectorObservationSize = 16; // 4 base + 12 wall rays
-        bp.BrainParameters.ActionSpec = ActionSpec.MakeContinuous(2);
-        bp.BehaviorType = BehaviorType.Default;
-
-        // Decision Requester
-        DecisionRequester dr = enemy.AddComponent<DecisionRequester>();
-        dr.DecisionPeriod = 3;
-
-        // Material
-        enemy.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("EnemyMaterial", new Color(0.9f, 0.2f, 0.2f));
-
-        return enemy;
-    }
-
-    // ─────────────────────────────────────────────
-    //  Camera
+    //  Camera (covers all 4 arenas in 2x2 grid)
     // ─────────────────────────────────────────────
 
     private static void SetupCamera()
     {
-        // Top-down camera overlooking the maze (9x9 maze, cellSize 2 = 18x18 units)
+        // 2x2 grid of arenas, each 18x18 units, spaced 25 units apart
+        // Center of all arenas: ((0+25)/2, (0+25)/2) = (12.5, 12.5)
         GameObject camObj = new GameObject("Main Camera");
         camObj.tag = "MainCamera";
         Undo.RegisterCreatedObjectUndo(camObj, "Create Camera");
 
         Camera cam = camObj.AddComponent<Camera>();
         cam.orthographic = true;
-        cam.orthographicSize = 12f;
+        cam.orthographicSize = 28f; // large enough to see all 4 arenas
         cam.nearClipPlane = 0.1f;
         cam.farClipPlane = 50f;
         cam.clearFlags = CameraClearFlags.SolidColor;
@@ -249,8 +256,9 @@ public class SceneSetup : EditorWindow
 
         camObj.AddComponent<AudioListener>();
 
-        // Position above center of a 9x9 maze (18x18 world units)
-        camObj.transform.position = new Vector3(9f, 30f, 9f);
+        float centerX = ArenaSpacing / 2f + 9f;
+        float centerZ = ArenaSpacing / 2f + 9f;
+        camObj.transform.position = new Vector3(centerX, 40f, centerZ);
         camObj.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
     }
 
@@ -284,27 +292,22 @@ public class SceneSetup : EditorWindow
 
         Canvas canvas = canvasObj.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvasObj.AddComponent<UnityEngine.UI.CanvasScaler>();
+        UnityEngine.UI.CanvasScaler scaler = canvasObj.AddComponent<UnityEngine.UI.CanvasScaler>();
+        scaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+        scaler.matchWidthOrHeight = 0.5f;
         canvasObj.AddComponent<UnityEngine.UI.GraphicRaycaster>();
 
-        // Timer text (top center)
-        GameObject timerObj = CreateTextElement(canvasObj.transform, "TimerText",
-            "Time: 60s", new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-            new Vector2(0, -20), 28);
-
-        // Result text (center)
-        GameObject resultObj = CreateTextElement(canvasObj.transform, "ResultText",
-            "", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-            new Vector2(0, 40), 36);
-
-        // Stats panel (top-left)
+        // Stats panel (top-right)
         GameObject statsObj = CreateTextElement(canvasObj.transform, "StatsText",
-            "Generation: 0\nEnemy Wins: 0  |  Player Wins: 0\nWin Rate: 0%\nAvg Catch: --  |  Best: --\nLast Catch: --",
-            new Vector2(0f, 1f), new Vector2(0f, 1f),
-            new Vector2(160, -80), 18);
-        // Make it left-aligned and wider
-        statsObj.GetComponent<RectTransform>().sizeDelta = new Vector2(380, 150);
-        statsObj.GetComponent<TMPro.TextMeshProUGUI>().alignment = TMPro.TextAlignmentOptions.TopLeft;
+            "",
+            new Vector2(1f, 1f), new Vector2(1f, 1f),
+            new Vector2(0, 0), 16);
+        RectTransform statsRect = statsObj.GetComponent<RectTransform>();
+        statsRect.pivot = new Vector2(1f, 1f);
+        statsRect.anchoredPosition = new Vector2(-10, -10);
+        statsRect.sizeDelta = new Vector2(380, 250);
+        statsObj.GetComponent<TMPro.TextMeshProUGUI>().alignment = TMPro.TextAlignmentOptions.TopRight;
 
         // EventSystem
         if (Object.FindAnyObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
@@ -340,53 +343,4 @@ public class SceneSetup : EditorWindow
         return obj;
     }
 
-    // ─────────────────────────────────────────────
-    //  Wire References
-    // ─────────────────────────────────────────────
-
-    private static void WireReferences(GameObject gameManagerObj, GameObject playerObj,
-        GameObject[] enemyObjs, GameObject canvasObj)
-    {
-        GameManager gm = gameManagerObj.GetComponent<GameManager>();
-        MazeGenerator maze = gameManagerObj.GetComponent<MazeGenerator>();
-        PlayerController player = playerObj.GetComponent<PlayerController>();
-
-        // Build enemies array
-        EnemyAgent[] enemies = new EnemyAgent[enemyObjs.Length];
-        for (int i = 0; i < enemyObjs.Length; i++)
-        {
-            enemies[i] = enemyObjs[i].GetComponent<EnemyAgent>();
-            enemies[i].player = playerObj.transform;
-            enemies[i].gameManager = gm;
-            EditorUtility.SetDirty(enemies[i]);
-        }
-
-        // GameManager references
-        gm.mazeGenerator = maze;
-        gm.enemies = enemies;
-        gm.player = player;
-
-        // Player references — flee from nearest enemy
-        Transform[] enemyTransforms = new Transform[enemyObjs.Length];
-        for (int i = 0; i < enemyObjs.Length; i++)
-            enemyTransforms[i] = enemyObjs[i].transform;
-        player.enemies = enemyTransforms;
-
-        // UI references
-        Transform timerText = canvasObj.transform.Find("TimerText");
-        Transform resultText = canvasObj.transform.Find("ResultText");
-        Transform statsText = canvasObj.transform.Find("StatsText");
-        if (timerText != null)
-            gm.timerText = timerText.GetComponent<TMPro.TextMeshProUGUI>();
-        if (resultText != null)
-            gm.resultText = resultText.GetComponent<TMPro.TextMeshProUGUI>();
-        if (statsText != null)
-            gm.statsText = statsText.GetComponent<TMPro.TextMeshProUGUI>();
-
-        // Mark everything as dirty for serialization
-        EditorUtility.SetDirty(gm);
-        EditorUtility.SetDirty(maze);
-        for (int i = 0; i < enemies.Length; i++)
-            EditorUtility.SetDirty(enemies[i]);
-    }
 }

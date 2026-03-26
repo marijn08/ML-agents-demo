@@ -14,7 +14,7 @@ public class PlayerController : MonoBehaviour
 
     [Header("Autonomous Mode")]
     [Tooltip("When true the player flees from enemies (for training).")]
-    public bool autonomous = true;
+    public bool autonomous = false;
     [Tooltip("Enemy transforms to flee from. Flees the nearest one.")]
     public Transform[] enemies;
     public float wallDetectRange = 2.5f;
@@ -32,18 +32,27 @@ public class PlayerController : MonoBehaviour
     {
         rb = GetComponent<Rigidbody>();
         rb.freezeRotation = true;
+
+        // When not autonomous, freeze the player completely so physics can't push it
+        if (!autonomous)
+        {
+            rb.isKinematic = true;
+        }
+
         PickRandomWanderDir();
     }
 
     private void FixedUpdate()
     {
-        if (autonomous && enemies != null && enemies.Length > 0)
-        {
-            MoveAutonomous();
-        }
-        else
+        if (!autonomous)
         {
             MoveManual();
+            return;
+        }
+
+        if (enemies != null && enemies.Length > 0)
+        {
+            MoveAutonomous();
         }
     }
 

@@ -33,7 +33,7 @@ public class MazeGenerator : MonoBehaviour
         ClearMaze();
 
         mazeParent = new GameObject("Maze").transform;
-        mazeParent.SetParent(transform);
+        mazeParent.SetParent(transform, false); // false = localPosition stays at 0,0,0
 
         visited = new bool[width, height];
         // walls[x, y, 0] = wall on the RIGHT side of cell (x,y)
@@ -220,7 +220,7 @@ public class MazeGenerator : MonoBehaviour
 
                 // Floor
                 GameObject floor = Instantiate(floorPrefab, mazeParent);
-                floor.transform.position = cellCenter;
+                floor.transform.localPosition = cellCenter;
                 floor.transform.localScale = new Vector3(cellSize, 0.1f, cellSize);
 
                 // Right wall
@@ -257,7 +257,7 @@ public class MazeGenerator : MonoBehaviour
     private void CreateWall(Vector3 position, Vector3 scale)
     {
         GameObject wall = Instantiate(wallPrefab, mazeParent);
-        wall.transform.position = position;
+        wall.transform.localPosition = position;
         wall.transform.localScale = scale;
     }
 }

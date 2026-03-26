@@ -25,12 +25,20 @@ if errorlevel 1 (
     echo.
 )
 
-:: Set run ID with timestamp so runs don't overwrite each other
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set datetime=%%I
-set TIMESTAMP=%datetime:~0,8%_%datetime:~8,4%
-set RUN_ID=MazeChaser_%TIMESTAMP%
+:: Resume a previous run or start a new one
+:: To resume: set RESUME=1 and set RUN_ID to the folder name in results\
+set RESUME=1
+set RUN_ID=MazeChaser_
 
-echo Run ID: %RUN_ID%
+if "%RESUME%"=="1" (
+    echo Resuming run: %RUN_ID%
+) else (
+    for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set datetime=%%I
+    set TIMESTAMP=%datetime:~0,8%_%datetime:~8,4%
+    set RUN_ID=MazeChaser_%TIMESTAMP%
+    echo New run ID: %RUN_ID%
+)
+
 echo Config: Assets/Training/maze_training.yaml
 echo.
 echo When you see "Listening on port 5004", press PLAY in Unity.
@@ -39,7 +47,11 @@ echo.
 echo ============================================
 echo.
 
-mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --time-scale=100 --width=84 --height=84 --quality-level=0
+if "%RESUME%"=="1" (
+    mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --resume --time-scale=100 --width=84 --height=84 --quality-level=0
+) else (
+    mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --time-scale=100 --width=84 --height=84 --quality-level=0
+)
 
 echo.
 echo ============================================
