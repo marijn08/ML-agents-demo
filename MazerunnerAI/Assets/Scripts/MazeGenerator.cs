@@ -271,11 +271,16 @@ public class MazeGenerator : MonoBehaviour
     /// <summary>
     /// Sets the color of a floor tile at the given maze cell coordinate.
     /// </summary>
+    private static readonly int ColorID = Shader.PropertyToID("_BaseColor");
+    private MaterialPropertyBlock mpb;
+
     public void SetFloorColor(Vector2Int cell, Color color)
     {
         if (floorRenderers != null && floorRenderers.TryGetValue(cell, out Renderer rend))
         {
-            rend.material.color = color;
+            if (mpb == null) mpb = new MaterialPropertyBlock();
+            mpb.SetColor(ColorID, color);
+            rend.SetPropertyBlock(mpb);
         }
     }
 

@@ -27,8 +27,8 @@ if errorlevel 1 (
 
 :: Resume a previous run or start a new one
 :: To resume: set RESUME=1 and set RUN_ID to the folder name in results\
-set RESUME=0
-set RESUME_RUN_ID=MazeChaser_
+set RESUME=1
+set RESUME_RUN_ID=MazeChaser_20260329_1643
 
 setlocal enabledelayedexpansion
 if "%RESUME%"=="1" (

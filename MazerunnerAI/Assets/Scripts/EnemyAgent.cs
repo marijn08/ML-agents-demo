@@ -18,7 +18,7 @@ public class EnemyAgent : Agent
 
     [Header("Detection")]
     public float maxDetectionRange = 25f;
-    public int wallRayCount = 8;
+    public int wallRayCount = 4;
     public float wallRayLength = 8f;
 
     [Header("References")]
@@ -29,20 +29,30 @@ public class EnemyAgent : Agent
     private float previousDistance;
     private Quaternion targetRotation;
     private bool isTurning;
-    private Vector3 startPosition;
-    private float maxDistFromStart;
     private System.Collections.Generic.HashSet<Vector2Int> visitedCells;
     private System.Collections.Generic.Dictionary<Vector2Int, int> cellLastVisitStep; // step number when cell was last visited
     private int stepsSinceLastNewCell;
     private int lastAction;
     private int decisionStep; // counts decisions within this episode
+    private Vector2Int previousCell;
+    private Vector2Int cellBeforePrevious;
 
     private int stuckCounter;
+
+    // Cached BFS structures to avoid GC allocations every frame
+    private System.Collections.Generic.Queue<Vector2Int> bfsQueue;
+    private System.Collections.Generic.HashSet<Vector2Int> bfsVisited;
+    private static readonly Vector2Int[] bfsOffsets = {
+        new Vector2Int(1, 0), new Vector2Int(-1, 0),
+        new Vector2Int(0, 1), new Vector2Int(0, -1)
+    };
 
     public override void Initialize()
     {
         rb = GetComponent<Rigidbody>();
         rb.freezeRotation = true;
+        bfsQueue = new System.Collections.Generic.Queue<Vector2Int>(256);
+        bfsVisited = new System.Collections.Generic.HashSet<Vector2Int>();
     }
 
     public override void OnEpisodeBegin()
@@ -52,8 +62,6 @@ public class EnemyAgent : Agent
         previousDistance = Vector3.Distance(transform.position, player.position);
         targetRotation = transform.rotation;
         isTurning = false;
-        startPosition = transform.position;
-        maxDistFromStart = 0f;
         visitedCells = new System.Collections.Generic.HashSet<Vector2Int>();
         visitedCells.Add(WorldToCell(transform.position));
         cellLastVisitStep = new System.Collections.Generic.Dictionary<Vector2Int, int>();
@@ -62,10 +70,18 @@ public class EnemyAgent : Agent
         lastAction = 0;
         decisionStep = 0;
         stuckCounter = 0;
+        previousCell = WorldToCell(transform.position);
+        cellBeforePrevious = previousCell;
     }
 
     /// <summary>
-    /// Observations: 4 base + wallRayCount + 4 neighbor tiles + 2 explore compass = 18 total (with 8 rays).
+    /// Observations (13 total):
+    ///   1-4:  Player info (LOS-gated): distance, forward dot, right dot, LOS flag
+    ///   5-8:  Wall raycasts (4 cardinal dirs relative to facing)
+    ///   9-10: Explore compass (forward + right dot toward nearest unvisited cell)
+    ///   11:   Exploration progress (fraction of maze visited)
+    ///   12:   Normalized time remaining (0 if infinite mode)
+    ///   13:   Junction type (open directions / 4)
     /// </summary>
     public override void CollectObservations(VectorSensor sensor)
     {
@@ -74,74 +90,52 @@ public class EnemyAgent : Agent
         float distance = toPlayerFlat.magnitude;
         Vector3 dirToPlayer = toPlayerFlat.normalized;
 
-        // 4. Line of sight (compute first, needed for other obs)
-        bool hasLOS = false;
-        if (distance <= maxDetectionRange)
-        {
-            if (Physics.Raycast(transform.position, dirToPlayer, out RaycastHit hit, maxDetectionRange))
-            {
-                hasLOS = hit.transform == player;
-            }
-        }
+        // LOS check — multi-ray so we don't miss the player clipping past wall edges
+        bool hasLOS = CheckLineOfSight(distance);
 
-        // 1. Normalized distance (only when LOS, otherwise 0 = no info)
+        // 1. Normalized distance (LOS-gated)
         sensor.AddObservation(hasLOS ? distance / maxDetectionRange : 0f);
 
-        // 2-3. Direction to player in local frame (only when LOS)
+        // 2-3. Direction to player in local frame (LOS-gated)
         sensor.AddObservation(hasLOS ? Vector3.Dot(transform.forward, dirToPlayer) : 0f);
         sensor.AddObservation(hasLOS ? Vector3.Dot(transform.right, dirToPlayer) : 0f);
 
-        // 4. Line of sight flag
+        // 4. LOS flag
         sensor.AddObservation(hasLOS ? 1f : 0f);
 
-        // 5-12. Wall raycasts (relative to agent facing)
-        float angleStep = 360f / wallRayCount;
-        for (int i = 0; i < wallRayCount; i++)
+        // 5-8. Wall raycasts — 4 cardinal directions relative to agent facing
+        Vector3[] rayDirs = { transform.forward, -transform.right, transform.right, -transform.forward };
+        for (int i = 0; i < 4; i++)
         {
-            Vector3 dir = Quaternion.Euler(0f, i * angleStep, 0f) * transform.forward;
-            if (Physics.Raycast(transform.position, dir, out RaycastHit wallHit, wallRayLength))
+            if (Physics.Raycast(transform.position, rayDirs[i], out RaycastHit wallHit, wallRayLength))
                 sensor.AddObservation(wallHit.distance / wallRayLength);
             else
                 sensor.AddObservation(1f);
         }
 
-        // 13-16. Neighbor tile staleness (relative to agent facing)
-        Vector3[] neighborDirs = {
-            transform.forward,    // ahead  (matches action 0)
-            -transform.right,     // left   (matches action 1)
-            transform.right,      // right  (matches action 2)
-            -transform.forward    // behind (matches action 3)
-        };
-
-        float neighborCheckDist = 1.2f;
-        for (int i = 0; i < 4; i++)
-        {
-            if (Physics.Raycast(transform.position, neighborDirs[i], neighborCheckDist))
-            {
-                sensor.AddObservation(-1f);
-            }
-            else
-            {
-                Vector2Int neighborCell = WorldToCell(transform.position + neighborDirs[i] * 2f);
-                if (!cellLastVisitStep.ContainsKey(neighborCell))
-                {
-                    sensor.AddObservation(1f);
-                }
-                else
-                {
-                    int stepsAgo = decisionStep - cellLastVisitStep[neighborCell];
-                    float staleness = Mathf.Clamp(stepsAgo / 10000f, 0.01f, 0.5f);
-                    sensor.AddObservation(staleness);
-                }
-            }
-        }
-
-        // 17-18. Compass toward nearest unvisited cell (in local frame)
-        // Gives the agent a long-range signal about where unexplored territory is
+        // 9-10. Compass toward nearest unvisited cell (2D local frame)
         Vector2Int myCell = WorldToCell(transform.position);
         Vector3 toNearest = FindNearestUnvisitedDirection(myCell);
-        sensor.AddObservation(Vector3.Dot(transform.forward, toNearest)); // forward component
-        sensor.AddObservation(Vector3.Dot(transform.right, toNearest));   // right component
+        sensor.AddObservation(Vector3.Dot(transform.forward, toNearest));
+        sensor.AddObservation(Vector3.Dot(transform.right, toNearest));
+
+        // 10. Exploration progress: fraction of maze cells visited
+        MazeGenerator maze = arenaManager.mazeGenerator;
+        int totalCells = maze.width * maze.height;
+        sensor.AddObservation((float)visitedCells.Count / totalCells);
+
+        // 11. Normalized time remaining (0 when timer is off)
+        sensor.AddObservation(arenaManager.useTimer ? arenaManager.NormalizedTimeRemaining : 0f);
+
+        // 12. Junction type: how many open directions at current cell (0.25 = dead end, 1.0 = 4-way)
+        Vector2Int cell = WorldToCell(transform.position);
+        Vector3 cellCenter = maze.CellToWorld(cell.x, cell.y);
+        int openDirs = 0;
+        if (!Physics.Raycast(cellCenter, Vector3.forward, 1.2f)) openDirs++;
+        if (!Physics.Raycast(cellCenter, Vector3.back, 1.2f)) openDirs++;
+        if (!Physics.Raycast(cellCenter, Vector3.right, 1.2f)) openDirs++;
+        if (!Physics.Raycast(cellCenter, Vector3.left, 1.2f)) openDirs++;
+        sensor.AddObservation(openDirs / 4f);
     }
 
     /// <summary>
@@ -175,6 +169,15 @@ public class EnemyAgent : Agent
 
         if (openCount == 0) return; // safety: never mask everything
 
+        // Block turning around when there are other open directions
+        // This prevents corridor oscillation — agent must commit to a direction
+        int forwardOpenCount = 0;
+        for (int i = 0; i < 3; i++) if (actionOpen[i]) forwardOpenCount++;
+        if (forwardOpenCount > 0 && actionOpen[3])
+        {
+            actionOpen[3] = false; // mask turn-around
+        }
+
         for (int i = 0; i < 4; i++)
             if (!actionOpen[i]) actionMask.SetActionEnabled(0, i, false);
     }
@@ -205,23 +208,42 @@ public class EnemyAgent : Agent
     {
         int action = actions.DiscreteActions[0];
 
-        // Apply turn
-        switch (action)
+        // Auto-turn in dead ends: if only one direction is open, face it immediately
+        Vector2Int curCell = WorldToCell(transform.position);
+        Vector3 curCellCenter = arenaManager.mazeGenerator.CellToWorld(curCell.x, curCell.y);
+        int openCount = 0;
+        Vector3 onlyOpenDir = Vector3.forward;
+        if (!Physics.Raycast(curCellCenter, Vector3.forward, 1.2f)) { openCount++; onlyOpenDir = Vector3.forward; }
+        if (!Physics.Raycast(curCellCenter, Vector3.back, 1.2f)) { openCount++; onlyOpenDir = Vector3.back; }
+        if (!Physics.Raycast(curCellCenter, Vector3.right, 1.2f)) { openCount++; onlyOpenDir = Vector3.right; }
+        if (!Physics.Raycast(curCellCenter, Vector3.left, 1.2f)) { openCount++; onlyOpenDir = Vector3.left; }
+        if (openCount == 1)
         {
-            case 0: // Keep going straight
-                break;
-            case 1: // Turn left 90°
-                targetRotation = Quaternion.Euler(0f, -90f, 0f) * transform.rotation;
+            // Dead end — force turn to the only exit
+            targetRotation = Quaternion.LookRotation(onlyOpenDir, Vector3.up);
+            if (Quaternion.Angle(rb.rotation, targetRotation) > 2f)
                 isTurning = true;
-                break;
-            case 2: // Turn right 90°
-                targetRotation = Quaternion.Euler(0f, 90f, 0f) * transform.rotation;
-                isTurning = true;
-                break;
-            case 3: // Turn around 180°
-                targetRotation = Quaternion.Euler(0f, 180f, 0f) * transform.rotation;
-                isTurning = true;
-                break;
+        }
+        else
+        {
+            // Normal action processing
+            switch (action)
+            {
+                case 0: // Keep going straight
+                    break;
+                case 1: // Turn left 90°
+                    targetRotation = Quaternion.Euler(0f, -90f, 0f) * transform.rotation;
+                    isTurning = true;
+                    break;
+                case 2: // Turn right 90°
+                    targetRotation = Quaternion.Euler(0f, 90f, 0f) * transform.rotation;
+                    isTurning = true;
+                    break;
+                case 3: // Turn around 180°
+                    targetRotation = Quaternion.Euler(0f, 180f, 0f) * transform.rotation;
+                    isTurning = true;
+                    break;
+            }
         }
 
         // Smooth rotation toward target
@@ -294,19 +316,14 @@ public class EnemyAgent : Agent
         // Line-of-sight check for chase rewards
         Vector3 toP = (player.position - transform.position);
         toP.y = 0f;
-        bool canSeePlayer = false;
-        if (toP.magnitude <= maxDetectionRange)
-        {
-            if (Physics.Raycast(transform.position, toP.normalized, out RaycastHit losHit, maxDetectionRange))
-                canSeePlayer = losHit.transform == player;
-        }
+        bool canSeePlayer = CheckLineOfSight(toP.magnitude);
 
         // Only reward distance-closing when agent has LOS
         float distanceDelta = previousDistance - currentDistance;
         if (canSeePlayer)
         {
-            AddReward(distanceDelta * 0.05f);
-            AddReward(0.002f);  // LOS maintenance bonus
+            AddReward(distanceDelta * 0.2f);  // strong chase signal
+            AddReward(0.01f);  // LOS maintenance bonus
         }
         previousDistance = currentDistance;
 
@@ -314,32 +331,49 @@ public class EnemyAgent : Agent
         Vector2Int currentCell = WorldToCell(transform.position);
         decisionStep++;
 
-        // Small one-time bonus for discovering new cells
+        // Penalize oscillation: stepping back to the cell before previous = bouncing
+        if (currentCell == cellBeforePrevious && currentCell != previousCell)
+        {
+            AddReward(-0.005f);
+        }
+
+        // Exploration reward: new cells get full bonus, revisited cells get
+        // a penalty (recent) or small reward (stale), encouraging exploration
         if (visitedCells.Add(currentCell))
         {
-            AddReward(0.003f);
+            AddReward(0.002f); // brand new cell
             stepsSinceLastNewCell = 0;
         }
         else
         {
+            int stepsAgo = decisionStep - cellLastVisitStep[currentCell];
+            // Recently visited = small penalty, long ago = neutral
+            float revisitReward = Mathf.Lerp(-0.002f, 0.0f, Mathf.Clamp01(stepsAgo / 5000f));
+            AddReward(revisitReward);
             stepsSinceLastNewCell++;
         }
 
-        // Update last-visit timestamp
+        // Update last-visit timestamp and cell history
         cellLastVisitStep[currentCell] = decisionStep;
-
-        // ── Floor tile coloring ──
-        // Just visited = dark red, older = lighter red, never back to white
-        MazeGenerator maze = arenaManager.mazeGenerator;
-        if (maze != null)
+        if (currentCell != previousCell)
         {
-            foreach (var kvp in cellLastVisitStep)
+            cellBeforePrevious = previousCell;
+            previousCell = currentCell;
+        }
+
+        // ── Floor tile coloring (throttled to every 50 steps) ──
+        if (decisionStep % 50 == 0)
+        {
+            MazeGenerator maze = arenaManager.mazeGenerator;
+            if (maze != null)
             {
-                int stepsAgo = decisionStep - kvp.Value;
-                float t = Mathf.Clamp01(stepsAgo / 10000f); // 0 = just visited, 1 = 10000+ steps ago
-                // Dark red → light pink (never white)
-                Color c = Color.Lerp(new Color(0.6f, 0f, 0f), new Color(1f, 0.7f, 0.7f), t);
-                maze.SetFloorColor(kvp.Key, c);
+                foreach (var kvp in cellLastVisitStep)
+                {
+                    int stepsAgo = decisionStep - kvp.Value;
+                    float t = Mathf.Clamp01(stepsAgo / 10000f);
+                    Color c = Color.Lerp(new Color(0.6f, 0f, 0f), new Color(1f, 0.7f, 0.7f), t);
+                    maze.SetFloorColor(kvp.Key, c);
+                }
             }
         }
 
@@ -361,13 +395,13 @@ public class EnemyAgent : Agent
 
     public void OnCaughtPlayer()
     {
-        AddReward(1.0f);
+        AddReward(5.0f);
         EndEpisode();
     }
 
     public void OnTimeUp()
     {
-        AddReward(-0.3f);
+        AddReward(-0.1f);
         EndEpisode();
     }
 
@@ -377,6 +411,38 @@ public class EnemyAgent : Agent
         {
             arenaManager.OnPlayerCaught();
         }
+    }
+
+    /// <summary>
+    /// Multi-ray line-of-sight check. Casts rays to the player's center and 4 offsets
+    /// (left, right, front, back of the player collider) so we don't miss visibility
+    /// when the ray barely clips a wall corner.
+    /// </summary>
+    private bool CheckLineOfSight(float distance)
+    {
+        if (distance > maxDetectionRange) return false;
+
+        Vector3 origin = transform.position;
+        Vector3 playerPos = player.position;
+        float offset = 0.3f;
+
+        // Check 5 target points without allocating an array
+        if (RayHitsPlayer(origin, playerPos)) return true;
+        if (RayHitsPlayer(origin, playerPos + Vector3.right * offset)) return true;
+        if (RayHitsPlayer(origin, playerPos - Vector3.right * offset)) return true;
+        if (RayHitsPlayer(origin, playerPos + Vector3.forward * offset)) return true;
+        if (RayHitsPlayer(origin, playerPos - Vector3.forward * offset)) return true;
+        return false;
+    }
+
+    private bool RayHitsPlayer(Vector3 origin, Vector3 target)
+    {
+        Vector3 dir = target - origin;
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 0.001f) return false;
+        if (Physics.Raycast(origin, dir.normalized, out RaycastHit hit, maxDetectionRange))
+            return hit.transform == player;
+        return false;
     }
 
     /// <summary>
@@ -418,21 +484,15 @@ public class EnemyAgent : Agent
         MazeGenerator maze = arenaManager.mazeGenerator;
         if (maze == null) return Vector3.zero;
 
-        var queue = new System.Collections.Generic.Queue<Vector2Int>();
-        var visited = new System.Collections.Generic.HashSet<Vector2Int>();
-        queue.Enqueue(startCell);
-        visited.Add(startCell);
+        bfsQueue.Clear();
+        bfsVisited.Clear();
+        bfsQueue.Enqueue(startCell);
+        bfsVisited.Add(startCell);
 
-        Vector2Int[] offsets = {
-            new Vector2Int(1, 0), new Vector2Int(-1, 0),
-            new Vector2Int(0, 1), new Vector2Int(0, -1)
-        };
-
-        while (queue.Count > 0)
+        while (bfsQueue.Count > 0)
         {
-            Vector2Int cell = queue.Dequeue();
+            Vector2Int cell = bfsQueue.Dequeue();
 
-            // Check if this cell has never been visited by the agent
             if (!cellLastVisitStep.ContainsKey(cell))
             {
                 Vector3 targetWorld = maze.CellToWorld(cell.x, cell.y);
@@ -441,20 +501,20 @@ public class EnemyAgent : Agent
                 return dir.magnitude > 0.01f ? dir.normalized : Vector3.zero;
             }
 
-            foreach (var off in offsets)
+            for (int i = 0; i < 4; i++)
             {
-                Vector2Int neighbor = cell + off;
+                Vector2Int neighbor = cell + bfsOffsets[i];
                 if (neighbor.x < 0 || neighbor.x >= maze.width ||
                     neighbor.y < 0 || neighbor.y >= maze.height)
                     continue;
-                if (visited.Contains(neighbor)) continue;
+                if (bfsVisited.Contains(neighbor)) continue;
                 if (maze.HasWallBetween(cell, neighbor)) continue;
-                visited.Add(neighbor);
-                queue.Enqueue(neighbor);
+                bfsVisited.Add(neighbor);
+                bfsQueue.Enqueue(neighbor);
             }
         }
 
-        return Vector3.zero; // all reachable cells visited
+        return Vector3.zero;
     }
 
     private void OnDrawGizmosSelected()

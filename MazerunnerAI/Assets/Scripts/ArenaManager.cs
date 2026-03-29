@@ -12,14 +12,17 @@ public class ArenaManager : MonoBehaviour
     public PlayerController player;
 
     [Header("Settings")]
-    public float episodeDuration = 30f;
+    public float episodeDuration = 60f;
     [Tooltip("If false, episodes only end on catch (infinite time). Set true for timed episodes.")]
-    public bool useTimer = true;
+    public bool useTimer = false;
 
     [HideInInspector] public GameManager globalStats;
 
     private float timeRemaining;
     private bool episodeActive;
+
+    /// <summary>Time remaining normalized to 0-1. Returns 0 if timer is off.</summary>
+    public float NormalizedTimeRemaining => useTimer ? Mathf.Clamp01(timeRemaining / episodeDuration) : 0f;
 
     private void Start()
     {
