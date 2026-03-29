@@ -27,16 +27,18 @@ if errorlevel 1 (
 
 :: Resume a previous run or start a new one
 :: To resume: set RESUME=1 and set RUN_ID to the folder name in results\
-set RESUME=1
-set RUN_ID=MazeChaser_
+set RESUME=0
+set RESUME_RUN_ID=MazeChaser_
 
+setlocal enabledelayedexpansion
 if "%RESUME%"=="1" (
-    echo Resuming run: %RUN_ID%
+    set RUN_ID=%RESUME_RUN_ID%
+    echo Resuming run: !RUN_ID!
 ) else (
-    for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set datetime=%%I
-    set TIMESTAMP=%datetime:~0,8%_%datetime:~8,4%
-    set RUN_ID=MazeChaser_%TIMESTAMP%
-    echo New run ID: %RUN_ID%
+    for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set "datetime=%%I"
+    set "TIMESTAMP=!datetime:~0,8!_!datetime:~8,4!"
+    set "RUN_ID=MazeChaser_!TIMESTAMP!"
+    echo New run ID: !RUN_ID!
 )
 
 echo Config: Assets/Training/maze_training.yaml
@@ -48,10 +50,11 @@ echo ============================================
 echo.
 
 if "%RESUME%"=="1" (
-    mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --resume --time-scale=100 --width=84 --height=84 --quality-level=0
+    mlagents-learn Assets/Training/maze_training.yaml --run-id=!RUN_ID! --resume --time-scale=100 --width=84 --height=84 --quality-level=0
 ) else (
-    mlagents-learn Assets/Training/maze_training.yaml --run-id=%RUN_ID% --time-scale=100 --width=84 --height=84 --quality-level=0
+    mlagents-learn Assets/Training/maze_training.yaml --run-id=!RUN_ID! --time-scale=100 --width=84 --height=84 --quality-level=0
 )
+endlocal
 
 echo.
 echo ============================================

@@ -65,7 +65,7 @@ public class EnemyAgent : Agent
     }
 
     /// <summary>
-    /// Observations: 4 base + wallRayCount + 4 neighbor tiles = 16 total (with 8 rays).
+    /// Observations: 4 base + wallRayCount + 4 neighbor tiles + 2 explore compass = 18 total (with 8 rays).
     /// </summary>
     public override void CollectObservations(VectorSensor sensor)
     {
@@ -94,7 +94,7 @@ public class EnemyAgent : Agent
         // 4. Line of sight flag
         sensor.AddObservation(hasLOS ? 1f : 0f);
 
-        // 5-8. Wall raycasts (relative to agent facing)
+        // 5-12. Wall raycasts (relative to agent facing)
         float angleStep = 360f / wallRayCount;
         for (int i = 0; i < wallRayCount; i++)
         {
@@ -106,9 +106,6 @@ public class EnemyAgent : Agent
         }
 
         // 13-16. Neighbor tile staleness (relative to agent facing)
-        // -1 = wall (can't navigate)
-        //  1 = never visited (best choice)
-        //  0.01..0.99 = visited, higher = longer ago (staler = better to revisit)
         Vector3[] neighborDirs = {
             transform.forward,    // ahead  (matches action 0)
             -transform.right,     // left   (matches action 1)
@@ -121,54 +118,83 @@ public class EnemyAgent : Agent
         {
             if (Physics.Raycast(transform.position, neighborDirs[i], neighborCheckDist))
             {
-                sensor.AddObservation(-1f); // wall blocks this direction
+                sensor.AddObservation(-1f);
             }
             else
             {
                 Vector2Int neighborCell = WorldToCell(transform.position + neighborDirs[i] * 2f);
                 if (!cellLastVisitStep.ContainsKey(neighborCell))
                 {
-                    sensor.AddObservation(1f); // never visited = best
+                    sensor.AddObservation(1f);
                 }
                 else
                 {
-                    // How many steps ago was this cell last visited?
-                    // More steps ago = higher value = slightly better to revisit
-                    // Capped at 0.5 so visited cells always feel different from unvisited (1.0)
                     int stepsAgo = decisionStep - cellLastVisitStep[neighborCell];
                     float staleness = Mathf.Clamp(stepsAgo / 10000f, 0.01f, 0.5f);
                     sensor.AddObservation(staleness);
                 }
             }
         }
+
+        // 17-18. Compass toward nearest unvisited cell (in local frame)
+        // Gives the agent a long-range signal about where unexplored territory is
+        Vector2Int myCell = WorldToCell(transform.position);
+        Vector3 toNearest = FindNearestUnvisitedDirection(myCell);
+        sensor.AddObservation(Vector3.Dot(transform.forward, toNearest)); // forward component
+        sensor.AddObservation(Vector3.Dot(transform.right, toNearest));   // right component
     }
 
     /// <summary>
     /// Mask actions that would face a wall. The agent can't choose directions
     /// it can't walk — this prevents it from getting stuck.
+    /// Raycasts from cell center to avoid edge-clipping false positives.
     /// </summary>
     public override void WriteDiscreteActionMask(IDiscreteActionMask actionMask)
     {
+        // Use cell center for reliable raycasts (avoids wall-edge clipping when slightly off-center)
+        Vector2Int cell = WorldToCell(transform.position);
+        Vector3 origin = arenaManager.mazeGenerator.CellToWorld(cell.x, cell.y);
         float checkDist = 1.2f;
 
-        bool forwardBlocked = Physics.Raycast(transform.position, transform.forward, checkDist);
-        bool leftBlocked = Physics.Raycast(transform.position, -transform.right, checkDist);
-        bool rightBlocked = Physics.Raycast(transform.position, transform.right, checkDist);
-        bool behindBlocked = Physics.Raycast(transform.position, -transform.forward, checkDist);
+        // Check world-cardinal directions, then map to agent-relative actions
+        bool northOpen = !Physics.Raycast(origin, Vector3.forward, checkDist);
+        bool southOpen = !Physics.Raycast(origin, Vector3.back, checkDist);
+        bool eastOpen  = !Physics.Raycast(origin, Vector3.right, checkDist);
+        bool westOpen  = !Physics.Raycast(origin, Vector3.left, checkDist);
 
-        // Count how many directions are open — never mask all of them
+        // Map world directions to agent-relative actions based on current facing
+        // Action 0=forward, 1=turn left, 2=turn right, 3=turn around
+        bool[] actionOpen = new bool[4];
+        actionOpen[0] = IsDirectionOpen(transform.forward, northOpen, southOpen, eastOpen, westOpen);
+        actionOpen[1] = IsDirectionOpen(-transform.right, northOpen, southOpen, eastOpen, westOpen);
+        actionOpen[2] = IsDirectionOpen(transform.right, northOpen, southOpen, eastOpen, westOpen);
+        actionOpen[3] = IsDirectionOpen(-transform.forward, northOpen, southOpen, eastOpen, westOpen);
+
         int openCount = 0;
-        if (!forwardBlocked) openCount++;
-        if (!leftBlocked) openCount++;
-        if (!rightBlocked) openCount++;
-        if (!behindBlocked) openCount++;
+        for (int i = 0; i < 4; i++) if (actionOpen[i]) openCount++;
 
-        if (openCount == 0) return; // all blocked (corner/stuck) — let agent pick freely
+        if (openCount == 0) return; // safety: never mask everything
 
-        if (forwardBlocked) actionMask.SetActionEnabled(0, 0, false);
-        if (leftBlocked) actionMask.SetActionEnabled(0, 1, false);
-        if (rightBlocked) actionMask.SetActionEnabled(0, 2, false);
-        if (behindBlocked) actionMask.SetActionEnabled(0, 3, false);
+        for (int i = 0; i < 4; i++)
+            if (!actionOpen[i]) actionMask.SetActionEnabled(0, i, false);
+    }
+
+    /// <summary>
+    /// Returns true if the given agent-relative direction roughly aligns with an open world direction.
+    /// </summary>
+    private bool IsDirectionOpen(Vector3 agentDir, bool northOpen, bool southOpen, bool eastOpen, bool westOpen)
+    {
+        // Find which world cardinal the agent direction is closest to
+        float dotN = Vector3.Dot(agentDir, Vector3.forward);
+        float dotS = Vector3.Dot(agentDir, Vector3.back);
+        float dotE = Vector3.Dot(agentDir, Vector3.right);
+        float dotW = Vector3.Dot(agentDir, Vector3.left);
+
+        float max = Mathf.Max(dotN, dotS, dotE, dotW);
+        if (max == dotN) return northOpen;
+        if (max == dotS) return southOpen;
+        if (max == dotE) return eastOpen;
+        return westOpen;
     }
 
     /// <summary>
@@ -220,8 +246,8 @@ public class EnemyAgent : Agent
         else
         {
             stuckCounter++;
-            // If stuck, snap to the center of current cell and face an open direction
-            if (stuckCounter > 5)
+            // If stuck for 2+ frames, snap to cell center and face an open direction
+            if (stuckCounter > 2)
             {
                 Vector2Int cell = WorldToCell(transform.position);
                 Vector3 cellCenter = arenaManager.mazeGenerator.CellToWorld(cell.x, cell.y);
@@ -229,18 +255,32 @@ public class EnemyAgent : Agent
                 rb.MovePosition(cellCenter);
                 rb.linearVelocity = Vector3.zero;
 
-                // Face the first open cardinal direction
+                // Face the first open cardinal direction (prefer directions with unvisited neighbors)
                 Vector3[] cardinals = { Vector3.forward, Vector3.right, Vector3.back, Vector3.left };
+                Vector3 bestDir = Vector3.forward;
+                bool foundUnvisited = false;
+
                 foreach (var d in cardinals)
                 {
-                    if (!Physics.Raycast(cellCenter, d, 1.2f))
+                    if (Physics.Raycast(cellCenter, d, 1.2f)) continue;
+
+                    if (!foundUnvisited)
                     {
-                        targetRotation = Quaternion.LookRotation(d, Vector3.up);
-                        rb.MoveRotation(targetRotation);
-                        isTurning = false;
-                        break;
+                        // Check if neighbor cell in this direction is unvisited
+                        Vector2Int neighborCell = WorldToCell(cellCenter + d * 2f);
+                        if (!cellLastVisitStep.ContainsKey(neighborCell))
+                        {
+                            bestDir = d;
+                            foundUnvisited = true;
+                            continue;
+                        }
+                        bestDir = d; // fallback to first open direction
                     }
                 }
+
+                targetRotation = Quaternion.LookRotation(bestDir, Vector3.up);
+                rb.MoveRotation(targetRotation);
+                isTurning = false;
                 stuckCounter = 0;
             }
         }
@@ -366,6 +406,55 @@ public class EnemyAgent : Agent
         if (!Physics.Raycast(transform.position, Vector3.left, checkDist)) count++;
         if (!Physics.Raycast(transform.position, Vector3.right, checkDist)) count++;
         return count;
+    }
+
+    /// <summary>
+    /// BFS through the maze grid to find the nearest unvisited cell.
+    /// Returns a normalized world-space direction from agent toward that cell,
+    /// or Vector3.zero if all cells have been visited.
+    /// </summary>
+    private Vector3 FindNearestUnvisitedDirection(Vector2Int startCell)
+    {
+        MazeGenerator maze = arenaManager.mazeGenerator;
+        if (maze == null) return Vector3.zero;
+
+        var queue = new System.Collections.Generic.Queue<Vector2Int>();
+        var visited = new System.Collections.Generic.HashSet<Vector2Int>();
+        queue.Enqueue(startCell);
+        visited.Add(startCell);
+
+        Vector2Int[] offsets = {
+            new Vector2Int(1, 0), new Vector2Int(-1, 0),
+            new Vector2Int(0, 1), new Vector2Int(0, -1)
+        };
+
+        while (queue.Count > 0)
+        {
+            Vector2Int cell = queue.Dequeue();
+
+            // Check if this cell has never been visited by the agent
+            if (!cellLastVisitStep.ContainsKey(cell))
+            {
+                Vector3 targetWorld = maze.CellToWorld(cell.x, cell.y);
+                Vector3 dir = targetWorld - transform.position;
+                dir.y = 0f;
+                return dir.magnitude > 0.01f ? dir.normalized : Vector3.zero;
+            }
+
+            foreach (var off in offsets)
+            {
+                Vector2Int neighbor = cell + off;
+                if (neighbor.x < 0 || neighbor.x >= maze.width ||
+                    neighbor.y < 0 || neighbor.y >= maze.height)
+                    continue;
+                if (visited.Contains(neighbor)) continue;
+                if (maze.HasWallBetween(cell, neighbor)) continue;
+                visited.Add(neighbor);
+                queue.Enqueue(neighbor);
+            }
+        }
+
+        return Vector3.zero; // all reachable cells visited
     }
 
     private void OnDrawGizmosSelected()

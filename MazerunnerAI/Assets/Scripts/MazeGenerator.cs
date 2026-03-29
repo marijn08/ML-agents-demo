@@ -290,4 +290,18 @@ public class MazeGenerator : MonoBehaviour
             Mathf.FloorToInt(local.z / cellSize)
         );
     }
+
+    /// <summary>
+    /// Returns true if there is a wall between two adjacent cells.
+    /// </summary>
+    public bool HasWallBetween(Vector2Int a, Vector2Int b)
+    {
+        int dx = b.x - a.x;
+        int dy = b.y - a.y;
+        if (dx == 1 && dy == 0) return walls[a.x, a.y, 0];      // b is RIGHT of a
+        if (dx == -1 && dy == 0) return walls[b.x, b.y, 0];     // b is LEFT of a
+        if (dx == 0 && dy == 1) return walls[a.x, a.y, 1];      // b is ABOVE a
+        if (dx == 0 && dy == -1) return walls[b.x, b.y, 1];     // b is BELOW a
+        return true; // not adjacent = treat as wall
+    }
 }

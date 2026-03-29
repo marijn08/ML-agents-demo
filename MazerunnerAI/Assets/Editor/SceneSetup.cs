@@ -117,7 +117,7 @@ public class SceneSetup : EditorWindow
         BehaviorParameters bp = enemyObj.GetComponent<BehaviorParameters>();
         if (bp == null) bp = enemyObj.AddComponent<BehaviorParameters>();
         bp.BehaviorName = "MazeChaser";
-        bp.BrainParameters.VectorObservationSize = 16;
+        bp.BrainParameters.VectorObservationSize = 18;
         bp.BrainParameters.ActionSpec = ActionSpec.MakeDiscrete(4);
         bp.BehaviorType = BehaviorType.Default;
 
@@ -125,7 +125,7 @@ public class SceneSetup : EditorWindow
         dr.DecisionPeriod = 5;
 
         // Very generous max steps — episode ends on catch, but has a safety cap
-        agent.MaxStep = 25000; // ~250 seconds at decision period 5
+        agent.MaxStep = 6000; // safety cap (~30s at decision period 5)
 
         enemyObj.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("EnemyMaterial", new Color(0.9f, 0.2f, 0.2f));
 

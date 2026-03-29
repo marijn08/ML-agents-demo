@@ -12,7 +12,9 @@ public class ArenaManager : MonoBehaviour
     public PlayerController player;
 
     [Header("Settings")]
-    public float episodeDuration = 60f;
+    public float episodeDuration = 30f;
+    [Tooltip("If false, episodes only end on catch (infinite time). Set true for timed episodes.")]
+    public bool useTimer = true;
 
     [HideInInspector] public GameManager globalStats;
 
@@ -51,7 +53,11 @@ public class ArenaManager : MonoBehaviour
 
     private void Update()
     {
-        // No timer — episode only ends when enemy catches the player
+        if (!episodeActive || !useTimer) return;
+
+        timeRemaining -= Time.deltaTime;
+        if (timeRemaining <= 0f)
+            OnPlayerSurvived();
     }
 
     /// <summary>
