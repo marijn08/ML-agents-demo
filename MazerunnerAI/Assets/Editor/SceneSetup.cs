@@ -125,7 +125,7 @@ public class SceneSetup : EditorWindow
         dr.DecisionPeriod = 5;
 
         // Very generous max steps — episode ends on catch, but has a safety cap
-        agent.MaxStep = 18000; // safety cap (~180s at decision period 5)
+        agent.MaxStep = 18000; // safety cap (~3 min at 50 steps/s)
 
         enemyObj.GetComponent<Renderer>().sharedMaterial = GetOrCreateMaterial("EnemyMaterial", new Color(0.9f, 0.2f, 0.2f));
 

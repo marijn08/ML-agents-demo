@@ -26,7 +26,7 @@ public class EnemyAgent : Agent
     public ArenaManager arenaManager;
 
     private Rigidbody rb;
-    private float previousDistance;
+    private float bestChaseDistance;
     private Quaternion targetRotation;
     private bool isTurning;
     private System.Collections.Generic.HashSet<Vector2Int> visitedCells;
@@ -59,7 +59,7 @@ public class EnemyAgent : Agent
     {
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
-        previousDistance = Vector3.Distance(transform.position, player.position);
+        bestChaseDistance = Vector3.Distance(transform.position, player.position);
         targetRotation = transform.rotation;
         isTurning = false;
         visitedCells = new System.Collections.Generic.HashSet<Vector2Int>();
@@ -169,13 +169,11 @@ public class EnemyAgent : Agent
 
         if (openCount == 0) return; // safety: never mask everything
 
-        // Block turning around when there are other open directions
-        // This prevents corridor oscillation — agent must commit to a direction
-        int forwardOpenCount = 0;
-        for (int i = 0; i < 3; i++) if (actionOpen[i]) forwardOpenCount++;
-        if (forwardOpenCount > 0 && actionOpen[3])
+        // Block turning around only in corridors (forward is open)
+        // At corners/dead-ends where forward is blocked, allow all directions
+        if (actionOpen[0] && actionOpen[3])
         {
-            actionOpen[3] = false; // mask turn-around
+            actionOpen[3] = false; // in a corridor, don't turn around
         }
 
         for (int i = 0; i < 4; i++)
@@ -308,8 +306,8 @@ public class EnemyAgent : Agent
         }
 
         // ── Rewards ──
-        // Terminal rewards drive learning; shaping is minimal.
-        //   Catch:   +1.0   |   Timeout: -0.3
+        // Tiny per-step cost creates urgency without overwhelming catch reward
+        AddReward(-0.00002f);
 
         float currentDistance = Vector3.Distance(transform.position, player.position);
 
@@ -318,45 +316,44 @@ public class EnemyAgent : Agent
         toP.y = 0f;
         bool canSeePlayer = CheckLineOfSight(toP.magnitude);
 
-        // Only reward distance-closing when agent has LOS
-        float distanceDelta = previousDistance - currentDistance;
-        if (canSeePlayer)
+        // Monotonic chase reward: only reward getting closer than ever before
+        // in this episode. Prevents back-and-forth exploit (can't re-earn same distance).
+        if (canSeePlayer && currentDistance < bestChaseDistance)
         {
-            AddReward(distanceDelta * 0.2f);  // strong chase signal
-            AddReward(0.01f);  // LOS maintenance bonus
+            AddReward((bestChaseDistance - currentDistance) * 0.2f);
+            bestChaseDistance = currentDistance;
         }
-        previousDistance = currentDistance;
 
-        // ── Exploration (only on decision steps, not repeated actions) ──
+        // ── Exploration (only on cell transitions, not every physics step) ──
         Vector2Int currentCell = WorldToCell(transform.position);
         decisionStep++;
 
-        // Penalize oscillation: stepping back to the cell before previous = bouncing
-        if (currentCell == cellBeforePrevious && currentCell != previousCell)
-        {
-            AddReward(-0.005f);
-        }
-
-        // Exploration reward: new cells get full bonus, revisited cells get
-        // a penalty (recent) or small reward (stale), encouraging exploration
-        if (visitedCells.Add(currentCell))
-        {
-            AddReward(0.002f); // brand new cell
-            stepsSinceLastNewCell = 0;
-        }
-        else
-        {
-            int stepsAgo = decisionStep - cellLastVisitStep[currentCell];
-            // Recently visited = small penalty, long ago = neutral
-            float revisitReward = Mathf.Lerp(-0.002f, 0.0f, Mathf.Clamp01(stepsAgo / 5000f));
-            AddReward(revisitReward);
-            stepsSinceLastNewCell++;
-        }
-
-        // Update last-visit timestamp and cell history
-        cellLastVisitStep[currentCell] = decisionStep;
         if (currentCell != previousCell)
         {
+            // Penalize oscillation: stepping back to the cell before previous = bouncing
+            if (currentCell == cellBeforePrevious)
+            {
+                AddReward(-0.005f);
+            }
+
+            // Exploration reward: new cells get full bonus, revisited cells get
+            // a penalty (recent) or neutral (stale), encouraging exploration
+            if (visitedCells.Add(currentCell))
+            {
+                AddReward(0.002f); // brand new cell
+                stepsSinceLastNewCell = 0;
+            }
+            else
+            {
+                int stepsAgo = decisionStep - cellLastVisitStep[currentCell];
+                // Recently visited = small penalty, long ago = neutral
+                float revisitReward = Mathf.Lerp(-0.002f, 0.0f, Mathf.Clamp01(stepsAgo / 5000f));
+                AddReward(revisitReward);
+                stepsSinceLastNewCell++;
+            }
+
+            // Update last-visit timestamp and cell history
+            cellLastVisitStep[currentCell] = decisionStep;
             cellBeforePrevious = previousCell;
             previousCell = currentCell;
         }
@@ -378,6 +375,12 @@ public class EnemyAgent : Agent
         }
 
         lastAction = action;
+
+        // Penalize if about to hit MaxStep without catching the player
+        if (MaxStep > 0 && StepCount >= MaxStep - 1)
+        {
+            AddReward(-1.0f);
+        }
     }
 
     public override void Heuristic(in ActionBuffers actionsOut)
@@ -401,7 +404,7 @@ public class EnemyAgent : Agent
 
     public void OnTimeUp()
     {
-        AddReward(-0.1f);
+        AddReward(-1.0f);
         EndEpisode();
     }
 

@@ -11,7 +11,7 @@ public class MazeGenerator : MonoBehaviour
     public int height = 13;
     public float cellSize = 2f;
     [Range(0f, 0.8f), Tooltip("Fraction of extra walls to remove after carving (0 = normal maze, 0.8 = very open)")]
-    public float openness = 0.1f;
+    public float openness = 0.25f;
 
     [Header("Prefabs")]
     public GameObject wallPrefab;

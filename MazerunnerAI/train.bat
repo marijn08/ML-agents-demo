@@ -26,9 +26,9 @@ if errorlevel 1 (
 )
 
 :: Resume a previous run or start a new one
-:: To resume: set RESUME=1 and set RUN_ID to the folder name in results\
+:: RESUME=1 continues the same run. INIT_FROM loads weights from a checkpoint into a new run.
 set RESUME=1
-set RESUME_RUN_ID=MazeChaser_20260329_1643
+set RESUME_RUN_ID=MazeChaser_20260330_0025
 
 setlocal enabledelayedexpansion
 if "%RESUME%"=="1" (
@@ -51,6 +51,9 @@ echo.
 
 if "%RESUME%"=="1" (
     mlagents-learn Assets/Training/maze_training.yaml --run-id=!RUN_ID! --resume --time-scale=100 --width=84 --height=84 --quality-level=0
+) else if defined INIT_FROM (
+    echo Initializing from: %INIT_FROM%
+    mlagents-learn Assets/Training/maze_training.yaml --run-id=!RUN_ID! --initialize-from=!INIT_FROM! --time-scale=100 --width=84 --height=84 --quality-level=0
 ) else (
     mlagents-learn Assets/Training/maze_training.yaml --run-id=!RUN_ID! --time-scale=100 --width=84 --height=84 --quality-level=0
 )
